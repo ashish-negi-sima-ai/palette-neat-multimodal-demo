@@ -1,0 +1,39 @@
+# Runtime / generated files
+runtime/
+*.log
+*.pid
+*.tmp
+
+# Python generated files
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Environment
+.env
+.env.*
+
+# C/C++ compiled files
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# Large model archives
+assets/models/*.tar.gz
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+vision-local/build-devkit/
+vision-local/build-devkit/

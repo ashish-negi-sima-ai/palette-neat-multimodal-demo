@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Palette NEAT SDK Demo</title>
+  <script>
+    // Apply the saved font size before the first paint (Controls > Font size).
+    (function () {
+      try {
+        var s = parseFloat(localStorage.getItem("demo.fontScale") || "1");
+        if ([1, 1.25, 1.5].indexOf(s) >= 0) {
+          document.documentElement.style.fontSize = (16 * s) + "px";
+          if (s > 1) document.documentElement.classList.add("scaled");
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Palette NEAT SDK Demo</h1>
+    </div>
+    <div class="top-actions">
+      <span class="status" id="statusCameras"><i class="dot"></i><span>Cameras</span></span>
+      <span class="status" id="statusVoice"><i class="dot"></i><span>Voice AI</span></span>
+      <button class="btn" id="controlsToggle" aria-expanded="false" aria-controls="sheet">Controls</button>
+    </div>
+  </header>
+
+  <section class="mla" aria-label="AI workloads">
+    <h2 class="mla-title">4 AI workloads running concurrently on <span class="hl">Modalix MLA</span></h2>
+    <ul class="workloads">
+      <li class="wl" id="wl-det">
+        <span class="wl-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
+        </span>
+        <span class="wl-text"><span class="wl-name">YOLO26m Detection</span><span class="wl-meta">Object detection</span></span>
+        <i class="wl-state" aria-hidden="true"></i>
+      </li>
+      <li class="wl" id="wl-seg">
+        <span class="wl-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+        </span>
+        <span class="wl-text"><span class="wl-name">YOLO26m Segmentation</span><span class="wl-meta">Instance segmentation</span></span>
+        <i class="wl-state" aria-hidden="true"></i>
+      </li>
+      <li class="wl" id="wl-whisper">
+        <span class="wl-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </span>
+        <span class="wl-text"><span class="wl-name">Whisper-medium</span><span class="wl-meta">Speech recognition</span></span>
+        <i class="wl-state" aria-hidden="true"></i>
+      </li>
+      <li class="wl" id="wl-qwen">
+        <span class="wl-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 9.5h8M8 12.5h5"/></svg>
+        </span>
+        <span class="wl-text"><span class="wl-name">Qwen3-0.6B</span><span class="wl-meta">Command understanding</span></span>
+        <i class="wl-state" aria-hidden="true"></i>
+      </li>
+    </ul>
+  </section>
+
+  <!-- Each card owns one <video> and one <canvas> for the whole life of the page.
+       A swap changes only which grid column a card sits in. -->
+  <main class="stage" id="stage">
+    <article class="cam" id="cam-0" data-source="0">
+      <header class="cam-head">
+        <span class="side" data-role="side">LEFT</span>
+        <span class="cam-model" data-role="model">YOLO26m Detection</span>
+        <span class="cam-mode" data-role="mode" hidden></span>
+      </header>
+      <div class="cam-video">
+        <video data-role="video" autoplay muted playsinline></video>
+        <canvas data-role="canvas"></canvas>
+        <div class="cam-badge" data-role="badge">Connecting</div>
+      </div>
+      <footer class="cam-foot">
+        <span class="kv">Detection <b data-role="detection">On</b></span>
+        <span class="kv classes">Classes <b data-role="classes">All</b></span>
+        <span class="kv">Box <i class="swatch" data-role="swatch"></i><b data-role="boxcolor">Default</b></span>
+        <span class="count" data-role="counts"></span>
+      </footer>
+    </article>
+
+    <article class="cam" id="cam-1" data-source="1">
+      <header class="cam-head">
+        <span class="side" data-role="side">RIGHT</span>
+        <span class="cam-model" data-role="model">YOLO26m Segmentation</span>
+        <span class="cam-mode" data-role="mode" hidden></span>
+      </header>
+      <div class="cam-video">
+        <video data-role="video" autoplay muted playsinline></video>
+        <canvas data-role="canvas"></canvas>
+        <div class="cam-badge" data-role="badge">Connecting</div>
+      </div>
+      <footer class="cam-foot">
+        <span class="kv">Detection <b data-role="detection">On</b></span>
+        <span class="kv classes">Classes <b data-role="classes">All</b></span>
+        <span class="kv">Box <i class="swatch" data-role="swatch"></i><b data-role="boxcolor">Default</b></span>
+        <span class="count" data-role="counts"></span>
+      </footer>
+    </article>
+  </main>
+
+  <section class="command" aria-label="Voice and text command">
+    <div class="readout">
+      <div class="label"><span id="inputLabel">Recognized</span></div>
+      <div class="value placeholder" id="inputText">음성 입력을 기다립니다.</div>
+    </div>
+    <div class="readout cmd">
+      <div class="label"><span>Command</span>
+        <button type="button" class="btn clear" id="clearBtn"
+                title="Clear the Recognized and Command display (cameras and detection are not changed)">Clear</button>
+      </div>
+      <div class="value placeholder" id="commandText">명령을 기다립니다.</div>
+    </div>
+    <div class="input-row">
+      <button id="talkBtn" class="talk" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        <span id="talkLabel">Hold to speak</span>
+      </button>
+      <div class="lang">
+        <span class="lang-label">Language</span>
+        <div class="seg" role="group" aria-label="Recognition language" id="languageSeg">
+          <button type="button" data-lang="auto" aria-pressed="false">Auto</button>
+          <button type="button" data-lang="ko" aria-pressed="false">KO</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+      </div>
+      <form class="text-form" id="textForm" autocomplete="off">
+        <input id="textInput" type="text" maxlength="300" placeholder="Type a command…" aria-label="Type a command">
+        <button type="submit" class="btn primary" id="textRun">Run</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet" id="sheet" hidden aria-label="Controls">
+  <div class="sheet-head">
+    <h2>Controls</h2>
+    <button class="btn" id="sheetClose">Close</button>
+  </div>
+
+  <section class="group">
+    <h3>Font size</h3>
+    <div class="seg" role="group" aria-label="Font size" id="fontSeg">
+      <button type="button" data-scale="1" aria-pressed="false">100%</button>
+      <button type="button" data-scale="1.25" aria-pressed="false">125%</button>
+      <button type="button" data-scale="1.5" aria-pressed="false">150%</button>
+    </div>
+  </section>
+
+  <section class="group">
+    <h3>Manual controls</h3>
+    <div class="ctl-cams" id="manualControls">
+      <div class="ctl" data-position="left">
+        <h4 data-role="title">Left</h4>
+        <div class="row">
+          <button class="btn" data-act="detection-on">Detection on</button>
+          <button class="btn" data-act="detection-off">Detection off</button>
+        </div>
+        <div class="row">
+          <button class="btn" data-act="detect-all">All classes</button>
+          <button class="btn" data-act="reset">Reset camera</button>
+        </div>
+        <label class="field">Classes
+          <select multiple data-act="classes"></select>
+        </label>
+        <button class="btn" data-act="apply-classes">Show selected classes</button>
+        <label class="field">Box colour
+          <select data-act="color"><option value="auto">Default</option></select>
+        </label>
+      </div>
+      <div class="ctl" data-position="right">
+        <h4 data-role="title">Right</h4>
+        <div class="row">
+          <button class="btn" data-act="detection-on">Detection on</button>
+          <button class="btn" data-act="detection-off">Detection off</button>
+        </div>
+        <div class="row">
+          <button class="btn" data-act="detect-all">All classes</button>
+          <button class="btn" data-act="reset">Reset camera</button>
+        </div>
+        <label class="field">Classes
+          <select multiple data-act="classes"></select>
+        </label>
+        <button class="btn" data-act="apply-classes">Show selected classes</button>
+        <label class="field">Box colour
+          <select data-act="color"><option value="auto">Default</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="row wide"><button class="btn" id="swapBtn">Swap left / right</button></div>
+  </section>
+
+  <details class="group diag">
+    <summary>Diagnostics</summary>
+    <pre class="out" id="commandOut"></pre>
+    <pre class="out" id="diagOut"></pre>
+  </details>
+
+  <details class="group diag">
+    <summary>Camera messages</summary>
+    <pre class="out" id="cameraOut"></pre>
+  </details>
+</aside>
+
+<!-- The installed Insight's own overlay renderer, proxied from vf, never copied. -->
+<script src="/insight/drawing.js"></script>
+<script src="/webrtc.js"></script>
+<script src="/overlay.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

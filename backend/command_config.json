@@ -1,0 +1,1444 @@
+{
+  "config_version": 2,
+  "_comment": "Single source of truth for the Palette NEAT SDK Demo command layer: the real YOLO class sets of the two model archives in assets/models, the Korean and English aliases, the supported actions, the intent phrases and the Qwen3 few-shot examples. Loaded and validated by backend/command_config.py.",
+  "provenance": {
+    "class_discovery": "num_classes from each archive's own 0_boxdecoder.json, names from assets/coco_labels.txt (the labels file the vision process loads)",
+    "same_class_sets": true
+  },
+  "matching": {
+    "_comment": "Deterministic phrase matching only (spec sections 17, 24, 25): longest valid phrase wins over non-overlapping spans, scanned left to right. No fuzzy, semantic or nearest-class matching anywhere.",
+    "longest_phrase_wins": true,
+    "ascii_word_boundary": true,
+    "ambiguous_distinct_matches": "unknown",
+    "hangul": {
+      "_comment": "How Hangul aliases match.  Two or more syllables match as a plain substring, so a trailing particle needs no handling and none is stripped.  A one-syllable noun alias matches only when it is bounded by non-Hangul, is not preceded by a counter or a digit, and - for the words in particle_required - is followed by one of the particles.  이랑/하고/과/와/랑 join two classes in one command (사람과 컵만).",
+      "short_alias_max_syllables": 1,
+      "particles": [
+        "에서",
+        "으로",
+        "를",
+        "을",
+        "이",
+        "가",
+        "은",
+        "는",
+        "만",
+        "도",
+        "에",
+        "의",
+        "로",
+        "이랑",
+        "하고",
+        "과",
+        "와",
+        "랑"
+      ],
+      "particle_required": [
+        "새",
+        "양",
+        "공",
+        "연",
+        "말"
+      ],
+      "number_guard": [
+        "몇",
+        "한",
+        "두",
+        "세",
+        "네",
+        "다섯",
+        "여섯",
+        "일곱",
+        "여덟",
+        "아홉",
+        "열",
+        "여러",
+        "몇몇"
+      ]
+    },
+    "ascii": {
+      "_comment": "`on` and `off` are both the ON/OFF polarity words and the preposition in \"on the right\".  Without these exclusions \"Turn detection off on the right\" resolves to true and false at the same time and the command is lost to ambiguity.",
+      "not_followed_by": {
+        "on": [
+          " the left",
+          " the right",
+          " left",
+          " right",
+          " the camera",
+          " camera",
+          " the screen",
+          " screen"
+        ],
+        "off": [
+          " the left",
+          " the right"
+        ]
+      }
+    },
+    "list_items": {
+      "_comment": "Class-list guard (command_normalizer.py): in an 'only these objects' context (a class is named, or 만 / only is used), a word joined into the list (X하고, X이랑, X랑, X과, X와, X만; or English X and Y, X, Y) must be a known phrase. An unknown one is an unresolved class term: the command is never run as a shorter list and no class is guessed. These words are fillers, not class candidates.",
+      "ignore": [
+        "좀",
+        "조금",
+        "하나",
+        "한개",
+        "한 개",
+        "두개",
+        "그냥",
+        "제발",
+        "빨리",
+        "이번",
+        "지금",
+        "오늘",
+        "이것",
+        "그것",
+        "저것",
+        "이거",
+        "그거",
+        "저거",
+        "여기",
+        "거기",
+        "저기",
+        "이쪽",
+        "그쪽",
+        "저쪽",
+        "것",
+        "거",
+        "다른",
+        "딱",
+        "오직",
+        "단지",
+        "그리고"
+      ],
+      "ascii_stopwords": [
+        "the",
+        "a",
+        "an",
+        "all",
+        "any",
+        "some",
+        "only",
+        "just",
+        "also",
+        "both",
+        "please",
+        "me",
+        "us",
+        "my",
+        "them",
+        "those",
+        "these",
+        "this",
+        "that",
+        "on",
+        "in",
+        "of",
+        "to",
+        "for",
+        "at",
+        "with",
+        "from",
+        "and",
+        "or",
+        "show",
+        "detect",
+        "find",
+        "keep",
+        "display",
+        "see",
+        "camera",
+        "cameras",
+        "side",
+        "view",
+        "screen",
+        "left",
+        "right",
+        "now",
+        "then",
+        "too"
+      ]
+    }
+  },
+  "streams": {
+    "0": {
+      "task": "detection",
+      "model_archive": "assets/models/yolo26m.tar.gz",
+      "labels_file": "assets/coco_labels.txt",
+      "num_classes": 80,
+      "classes": [
+        "person",
+        "bicycle",
+        "car",
+        "motorcycle",
+        "airplane",
+        "bus",
+        "train",
+        "truck",
+        "boat",
+        "traffic light",
+        "fire hydrant",
+        "stop sign",
+        "parking meter",
+        "bench",
+        "bird",
+        "cat",
+        "dog",
+        "horse",
+        "sheep",
+        "cow",
+        "elephant",
+        "bear",
+        "zebra",
+        "giraffe",
+        "backpack",
+        "umbrella",
+        "handbag",
+        "tie",
+        "suitcase",
+        "frisbee",
+        "skis",
+        "snowboard",
+        "sports ball",
+        "kite",
+        "baseball bat",
+        "baseball glove",
+        "skateboard",
+        "surfboard",
+        "tennis racket",
+        "bottle",
+        "wine glass",
+        "cup",
+        "fork",
+        "knife",
+        "spoon",
+        "bowl",
+        "banana",
+        "apple",
+        "sandwich",
+        "orange",
+        "broccoli",
+        "carrot",
+        "hot dog",
+        "pizza",
+        "donut",
+        "cake",
+        "chair",
+        "couch",
+        "potted plant",
+        "bed",
+        "dining table",
+        "toilet",
+        "tv",
+        "laptop",
+        "mouse",
+        "remote",
+        "keyboard",
+        "cell phone",
+        "microwave",
+        "oven",
+        "toaster",
+        "sink",
+        "refrigerator",
+        "book",
+        "clock",
+        "vase",
+        "scissors",
+        "teddy bear",
+        "hair drier",
+        "toothbrush"
+      ],
+      "discovered_from": "yolo26m.tar.gz::0_boxdecoder.json num_classes + coco_labels.txt"
+    },
+    "1": {
+      "task": "segmentation",
+      "model_archive": "assets/models/yolo26m-seg.tar.gz",
+      "labels_file": "assets/coco_labels.txt",
+      "num_classes": 80,
+      "classes": [
+        "person",
+        "bicycle",
+        "car",
+        "motorcycle",
+        "airplane",
+        "bus",
+        "train",
+        "truck",
+        "boat",
+        "traffic light",
+        "fire hydrant",
+        "stop sign",
+        "parking meter",
+        "bench",
+        "bird",
+        "cat",
+        "dog",
+        "horse",
+        "sheep",
+        "cow",
+        "elephant",
+        "bear",
+        "zebra",
+        "giraffe",
+        "backpack",
+        "umbrella",
+        "handbag",
+        "tie",
+        "suitcase",
+        "frisbee",
+        "skis",
+        "snowboard",
+        "sports ball",
+        "kite",
+        "baseball bat",
+        "baseball glove",
+        "skateboard",
+        "surfboard",
+        "tennis racket",
+        "bottle",
+        "wine glass",
+        "cup",
+        "fork",
+        "knife",
+        "spoon",
+        "bowl",
+        "banana",
+        "apple",
+        "sandwich",
+        "orange",
+        "broccoli",
+        "carrot",
+        "hot dog",
+        "pizza",
+        "donut",
+        "cake",
+        "chair",
+        "couch",
+        "potted plant",
+        "bed",
+        "dining table",
+        "toilet",
+        "tv",
+        "laptop",
+        "mouse",
+        "remote",
+        "keyboard",
+        "cell phone",
+        "microwave",
+        "oven",
+        "toaster",
+        "sink",
+        "refrigerator",
+        "book",
+        "clock",
+        "vase",
+        "scissors",
+        "teddy bear",
+        "hair drier",
+        "toothbrush"
+      ],
+      "discovered_from": "yolo26m-seg.tar.gz::0_boxdecoder.json num_classes + coco_labels.txt"
+    }
+  },
+  "display_defaults": {
+    "left": "0",
+    "right": "1"
+  },
+  "canonical_objects": [
+    "airplane",
+    "apple",
+    "backpack",
+    "banana",
+    "baseball bat",
+    "baseball glove",
+    "bear",
+    "bed",
+    "bench",
+    "bicycle",
+    "bird",
+    "boat",
+    "book",
+    "bottle",
+    "bowl",
+    "broccoli",
+    "bus",
+    "cake",
+    "car",
+    "carrot",
+    "cat",
+    "cell phone",
+    "chair",
+    "clock",
+    "couch",
+    "cow",
+    "cup",
+    "dining table",
+    "dog",
+    "donut",
+    "elephant",
+    "fire hydrant",
+    "fork",
+    "frisbee",
+    "giraffe",
+    "hair drier",
+    "handbag",
+    "horse",
+    "hot dog",
+    "keyboard",
+    "kite",
+    "knife",
+    "laptop",
+    "microwave",
+    "motorcycle",
+    "mouse",
+    "orange",
+    "oven",
+    "parking meter",
+    "person",
+    "pizza",
+    "potted plant",
+    "refrigerator",
+    "remote",
+    "sandwich",
+    "scissors",
+    "sheep",
+    "sink",
+    "skateboard",
+    "skis",
+    "snowboard",
+    "spoon",
+    "sports ball",
+    "stop sign",
+    "suitcase",
+    "surfboard",
+    "teddy bear",
+    "tennis racket",
+    "tie",
+    "toaster",
+    "toilet",
+    "toothbrush",
+    "traffic light",
+    "train",
+    "truck",
+    "tv",
+    "umbrella",
+    "vase",
+    "wine glass",
+    "zebra"
+  ],
+  "slots": {
+    "camera": {
+      "left": [
+        "left",
+        "왼쪽",
+        "좌측",
+        "레프트",
+        "왼편"
+      ],
+      "right": [
+        "right",
+        "오른쪽",
+        "우측",
+        "라이트",
+        "오른편"
+      ],
+      "both": [
+        "both",
+        "both cameras",
+        "both sides",
+        "all cameras",
+        "양쪽",
+        "양쪽 카메라",
+        "양 쪽",
+        "둘 다",
+        "모든 카메라",
+        "좌우 모두",
+        "좌우 둘 다",
+        "왼쪽 오른쪽 모두",
+        "왼쪽 오른쪽 둘 다",
+        "양쪽 모두"
+      ]
+    },
+    "object": {
+      "airplane": [
+        "airplane",
+        "airplanes",
+        "plane",
+        "planes",
+        "aeroplane",
+        "aeroplanes",
+        "aircraft",
+        "aircrafts",
+        "비행기",
+        "항공기"
+      ],
+      "apple": [
+        "apple",
+        "apples",
+        "사과"
+      ],
+      "backpack": [
+        "backpack",
+        "backpacks",
+        "배낭",
+        "백팩"
+      ],
+      "banana": [
+        "banana",
+        "bananas",
+        "바나나"
+      ],
+      "baseball bat": [
+        "baseball bat",
+        "baseball bats",
+        "야구방망이",
+        "야구 배트"
+      ],
+      "baseball glove": [
+        "baseball glove",
+        "baseball gloves",
+        "야구글러브",
+        "야구 글러브"
+      ],
+      "bear": [
+        "bear",
+        "bears",
+        "곰"
+      ],
+      "bed": [
+        "bed",
+        "beds",
+        "침대"
+      ],
+      "bench": [
+        "bench",
+        "benches",
+        "벤치"
+      ],
+      "bicycle": [
+        "bicycle",
+        "bicycles",
+        "자전거"
+      ],
+      "bird": [
+        "bird",
+        "birds",
+        "새",
+        "새들"
+      ],
+      "boat": [
+        "boat",
+        "boats",
+        "보트",
+        "선박"
+      ],
+      "book": [
+        "book",
+        "books",
+        "책"
+      ],
+      "bottle": [
+        "bottle",
+        "bottles",
+        "물병",
+        "병"
+      ],
+      "bowl": [
+        "bowl",
+        "bowls",
+        "그릇",
+        "사발"
+      ],
+      "broccoli": [
+        "broccoli",
+        "브로콜리"
+      ],
+      "bus": [
+        "bus",
+        "buses",
+        "버스"
+      ],
+      "cake": [
+        "cake",
+        "cakes",
+        "케이크"
+      ],
+      "car": [
+        "car",
+        "cars",
+        "automobile",
+        "automobiles",
+        "자동차",
+        "승용차",
+        "차량"
+      ],
+      "carrot": [
+        "carrot",
+        "carrots",
+        "당근"
+      ],
+      "cat": [
+        "cat",
+        "cats",
+        "고양이",
+        "야옹이"
+      ],
+      "cell phone": [
+        "cell phone",
+        "cell phones",
+        "cellphone",
+        "cellphones",
+        "cell-phone",
+        "cell-phones",
+        "phone",
+        "phones",
+        "mobile phone",
+        "mobile phones",
+        "mobilephone",
+        "mobilephones",
+        "smartphone",
+        "smartphones",
+        "smart phone",
+        "smart phones",
+        "휴대폰",
+        "핸드폰",
+        "스마트폰",
+        "휴대전화"
+      ],
+      "chair": [
+        "chair",
+        "chairs",
+        "의자"
+      ],
+      "clock": [
+        "clock",
+        "clocks",
+        "시계"
+      ],
+      "couch": [
+        "couch",
+        "couches",
+        "sofa",
+        "sofas",
+        "소파"
+      ],
+      "cow": [
+        "cow",
+        "cows",
+        "젖소",
+        "암소"
+      ],
+      "cup": [
+        "cup",
+        "cups",
+        "컵",
+        "머그컵",
+        "컷"
+      ],
+      "dining table": [
+        "dining table",
+        "dining tables",
+        "table",
+        "tables",
+        "식탁"
+      ],
+      "dog": [
+        "dog",
+        "dogs",
+        "개",
+        "강아지",
+        "멍멍이"
+      ],
+      "donut": [
+        "donut",
+        "donuts",
+        "도넛"
+      ],
+      "elephant": [
+        "elephant",
+        "elephants",
+        "코끼리"
+      ],
+      "fire hydrant": [
+        "fire hydrant",
+        "fire hydrants",
+        "소화전"
+      ],
+      "fork": [
+        "fork",
+        "forks",
+        "포크"
+      ],
+      "frisbee": [
+        "frisbee",
+        "frisbees",
+        "프리스비",
+        "원반"
+      ],
+      "giraffe": [
+        "giraffe",
+        "giraffes",
+        "기린"
+      ],
+      "hair drier": [
+        "hair drier",
+        "hair driers",
+        "hair dryer",
+        "hair dryers",
+        "hairdryer",
+        "hairdryers",
+        "헤어드라이어",
+        "드라이기"
+      ],
+      "handbag": [
+        "handbag",
+        "handbags",
+        "핸드백"
+      ],
+      "horse": [
+        "horse",
+        "horses",
+        "말",
+        "조랑말"
+      ],
+      "hot dog": [
+        "hot dog",
+        "hot dogs",
+        "핫도그"
+      ],
+      "keyboard": [
+        "keyboard",
+        "keyboards",
+        "키보드"
+      ],
+      "kite": [
+        "kite",
+        "kites",
+        "연"
+      ],
+      "knife": [
+        "knife",
+        "knives",
+        "나이프",
+        "칼"
+      ],
+      "laptop": [
+        "laptop",
+        "laptops",
+        "notebook computer",
+        "notebook computers",
+        "노트북",
+        "랩탑"
+      ],
+      "microwave": [
+        "microwave",
+        "microwaves",
+        "전자레인지"
+      ],
+      "motorcycle": [
+        "motorcycle",
+        "motorcycles",
+        "motorbike",
+        "motorbikes",
+        "오토바이",
+        "모터사이클"
+      ],
+      "mouse": [
+        "mouse",
+        "mice",
+        "마우스"
+      ],
+      "orange": [
+        "orange",
+        "oranges",
+        "오렌지"
+      ],
+      "oven": [
+        "oven",
+        "ovens",
+        "오븐"
+      ],
+      "parking meter": [
+        "parking meter",
+        "parking meters",
+        "주차요금기",
+        "주차 미터기"
+      ],
+      "person": [
+        "person",
+        "people",
+        "persons",
+        "human",
+        "humans",
+        "pedestrian",
+        "pedestrians",
+        "사람",
+        "인물",
+        "보행자",
+        "사람들"
+      ],
+      "pizza": [
+        "pizza",
+        "pizzas",
+        "피자"
+      ],
+      "potted plant": [
+        "potted plant",
+        "potted plants",
+        "plant",
+        "plants",
+        "pot plant",
+        "pot plants",
+        "화분"
+      ],
+      "refrigerator": [
+        "refrigerator",
+        "refrigerators",
+        "fridge",
+        "fridges",
+        "냉장고"
+      ],
+      "remote": [
+        "remote",
+        "remotes",
+        "remote control",
+        "remote controls",
+        "리모컨"
+      ],
+      "sandwich": [
+        "sandwich",
+        "sandwiches",
+        "샌드위치"
+      ],
+      "scissors": [
+        "scissors",
+        "가위"
+      ],
+      "sheep": [
+        "sheep",
+        "양"
+      ],
+      "sink": [
+        "sink",
+        "sinks",
+        "싱크대",
+        "세면대"
+      ],
+      "skateboard": [
+        "skateboard",
+        "skateboards",
+        "스케이트보드"
+      ],
+      "skis": [
+        "skis",
+        "스키"
+      ],
+      "snowboard": [
+        "snowboard",
+        "snowboards",
+        "스노보드"
+      ],
+      "spoon": [
+        "spoon",
+        "spoons",
+        "숟가락",
+        "스푼"
+      ],
+      "sports ball": [
+        "sports ball",
+        "sports balls",
+        "ball",
+        "balls",
+        "공",
+        "운동공"
+      ],
+      "stop sign": [
+        "stop sign",
+        "stop signs",
+        "정지표지판",
+        "정지 표지판"
+      ],
+      "suitcase": [
+        "suitcase",
+        "suitcases",
+        "여행가방",
+        "캐리어"
+      ],
+      "surfboard": [
+        "surfboard",
+        "surfboards",
+        "서핑보드"
+      ],
+      "teddy bear": [
+        "teddy bear",
+        "teddy bears",
+        "테디베어",
+        "곰인형"
+      ],
+      "tennis racket": [
+        "tennis racket",
+        "tennis rackets",
+        "테니스라켓",
+        "테니스 라켓"
+      ],
+      "tie": [
+        "tie",
+        "ties",
+        "넥타이"
+      ],
+      "toaster": [
+        "toaster",
+        "toasters",
+        "토스터"
+      ],
+      "toilet": [
+        "toilet",
+        "toilets",
+        "lavatory",
+        "lavatories",
+        "변기"
+      ],
+      "toothbrush": [
+        "toothbrush",
+        "toothbrushes",
+        "칫솔"
+      ],
+      "traffic light": [
+        "traffic light",
+        "traffic lights",
+        "신호등",
+        "교통신호등"
+      ],
+      "train": [
+        "train",
+        "trains",
+        "기차",
+        "열차"
+      ],
+      "truck": [
+        "truck",
+        "trucks",
+        "트럭",
+        "화물차"
+      ],
+      "tv": [
+        "tv",
+        "tvs",
+        "television",
+        "televisions",
+        "telly",
+        "tellies",
+        "monitor",
+        "monitors",
+        "텔레비전",
+        "티비"
+      ],
+      "umbrella": [
+        "umbrella",
+        "umbrellas",
+        "우산"
+      ],
+      "vase": [
+        "vase",
+        "vases",
+        "꽃병",
+        "화병"
+      ],
+      "wine glass": [
+        "wine glass",
+        "wine glasses",
+        "와인잔",
+        "와인 글라스"
+      ],
+      "zebra": [
+        "zebra",
+        "zebras",
+        "얼룩말"
+      ]
+    },
+    "color": {
+      "red": [
+        "red",
+        "빨강",
+        "빨간색",
+        "빨간",
+        "붉은색",
+        "적색",
+        "레드"
+      ],
+      "green": [
+        "green",
+        "초록",
+        "초록색",
+        "녹색",
+        "그린",
+        "초록빛"
+      ],
+      "blue": [
+        "blue",
+        "파랑",
+        "파란색",
+        "파란",
+        "청색",
+        "블루"
+      ],
+      "yellow": [
+        "yellow",
+        "노랑",
+        "노란색",
+        "노란",
+        "황색",
+        "옐로우",
+        "옐로"
+      ],
+      "white": [
+        "white",
+        "하양",
+        "하얀색",
+        "하얀",
+        "흰색",
+        "백색",
+        "화이트"
+      ],
+      "orange": [
+        "orange",
+        "주황",
+        "주황색",
+        "오렌지",
+        "오렌지색",
+        "귤색"
+      ],
+      "purple": [
+        "purple",
+        "violet",
+        "보라",
+        "보라색",
+        "자색",
+        "자주색",
+        "퍼플"
+      ],
+      "cyan": [
+        "cyan",
+        "하늘색",
+        "하늘",
+        "청록",
+        "청록색",
+        "시안"
+      ],
+      "pink": [
+        "pink",
+        "분홍",
+        "분홍색",
+        "핑크",
+        "핑크색",
+        "연분홍",
+        "핑크빛"
+      ],
+      "black": [
+        "black",
+        "검정",
+        "검정색",
+        "검은색",
+        "까만색",
+        "흑색",
+        "블랙"
+      ]
+    },
+    "enabled": {
+      "true": [
+        "turn on",
+        "switch on",
+        "enable",
+        "enabled",
+        "activate",
+        "on",
+        "켜",
+        "켜줘",
+        "켜라",
+        "켜주세요",
+        "온",
+        "활성화"
+      ],
+      "false": [
+        "turn off",
+        "switch off",
+        "disable",
+        "disabled",
+        "deactivate",
+        "off",
+        "꺼",
+        "꺼줘",
+        "꺼라",
+        "꺼주세요",
+        "끄",
+        "끄세요",
+        "오프",
+        "비활성화",
+        "하지 마",
+        "하지마",
+        "하지 말",
+        "주지 마",
+        "주지마",
+        "그만",
+        "stop",
+        "do not",
+        "dont",
+        "no more",
+        "nothing"
+      ]
+    }
+  },
+  "actions": {
+    "swap_camera": {
+      "fields": []
+    },
+    "detect_only": {
+      "fields": [
+        "camera",
+        "classes"
+      ]
+    },
+    "detect_all": {
+      "fields": [
+        "camera"
+      ]
+    },
+    "detection_on": {
+      "fields": [
+        "camera"
+      ]
+    },
+    "detection_off": {
+      "fields": [
+        "camera"
+      ]
+    },
+    "reset": {
+      "fields": [
+        "camera"
+      ]
+    },
+    "set_box_color": {
+      "fields": [
+        "camera",
+        "color"
+      ]
+    },
+    "unknown": {
+      "fields": [
+        "original_text"
+      ]
+    }
+  },
+  "unsupported_actions": {
+    "_comment": "Recognised so the gate can name them; never executable and never present in `actions` (spec sections 2-4).",
+    "display": "camera/display ON/OFF is unsupported by design"
+  },
+  "intent": {
+    "show_only": {
+      "show_only": [
+        "only",
+        "just",
+        "만",
+        "뿐",
+        "이외에는",
+        "외에는",
+        "말고는"
+      ]
+    },
+    "detect_verb": {
+      "detect_verb": [
+        "detect",
+        "find",
+        "show",
+        "display",
+        "filter",
+        "탐지",
+        "검출",
+        "찾아",
+        "찾아줘",
+        "보여",
+        "보여줘",
+        "보여주세요",
+        "표시",
+        "detecting",
+        "showing",
+        "keep",
+        "팜지"
+      ]
+    },
+    "detection_target": {
+      "detection": [
+        "detection",
+        "detections",
+        "detector",
+        "bounding box",
+        "bounding boxes",
+        "boxes",
+        "탐지",
+        "검출",
+        "디텍션",
+        "바운딩박스",
+        "바운딩 박스",
+        "박스",
+        "아무것도",
+        "anything",
+        "nothing",
+        "the boxes",
+        "팜지"
+      ]
+    },
+    "display_target": {
+      "display": [
+        "camera",
+        "cameras",
+        "display",
+        "screen",
+        "video",
+        "picture",
+        "feed",
+        "카메라",
+        "화면",
+        "디스플레이",
+        "영상",
+        "비디오",
+        "스크린"
+      ]
+    },
+    "swap": {
+      "swap": [
+        "swap",
+        "switch the cameras",
+        "switch cameras",
+        "exchange",
+        "바꿔",
+        "바꿔줘",
+        "바꿔주세요",
+        "바꾸어",
+        "교체",
+        "스왑",
+        "맞바꿔",
+        "전환",
+        "교체하세요",
+        "교체해",
+        "교체해줘",
+        "교체하",
+        "서로 바꿔",
+        "좌우 바꿔",
+        "좌우 교체",
+        "위치 바꿔",
+        "위치 교체",
+        "자리 바꿔",
+        "서로 교체",
+        "바꾸세요",
+        "바꿔 주세요",
+        "swap the cameras",
+        "switch left and right",
+        "exchange the cameras",
+        "바꾸고",
+        "바꾼",
+        "바꿔서"
+      ]
+    },
+    "reset": {
+      "reset": [
+        "초기화",
+        "초기화해",
+        "초기화해줘",
+        "초기화하세요",
+        "초기화 해",
+        "리셋",
+        "리셋해",
+        "리셋해줘",
+        "리셋하세요",
+        "원래대로",
+        "기본값",
+        "기본 설정",
+        "기본설정",
+        "reset",
+        "default settings",
+        "defaults"
+      ]
+    },
+    "show_all": {
+      "show_all": [
+        "전체",
+        "전체보기",
+        "전부",
+        "모두",
+        "다 보여",
+        "전체 클래스",
+        "필터 해제",
+        "해제",
+        "clear",
+        "clear the filter",
+        "show all",
+        "show everything",
+        "all classes",
+        "모든 클래스",
+        "모든 객체",
+        "all objects",
+        "every class",
+        "everything"
+      ]
+    },
+    "color_target": {
+      "color_target": [
+        "박스",
+        "바운딩박스",
+        "바운딩 박스",
+        "경계 상자",
+        "테두리",
+        "색",
+        "색상",
+        "색깔",
+        "box",
+        "bounding box",
+        "colour",
+        "color"
+      ]
+    },
+    "conditional": {
+      "conditional": [
+        "보이면",
+        "나오면",
+        "있으면",
+        "없으면",
+        "나타나면",
+        "감지되면",
+        "탐지되면",
+        "되면",
+        "하면",
+        "if",
+        "when",
+        "whenever",
+        "unless"
+      ]
+    }
+  },
+  "few_shot": [
+    [
+      "왼쪽 사람만 보여줘",
+      {
+        "action": "detect_only",
+        "camera": "left",
+        "classes": [
+          "person"
+        ]
+      }
+    ],
+    [
+      "오른쪽에서 사람하고 컵만 탐지해",
+      {
+        "action": "detect_only",
+        "camera": "right",
+        "classes": [
+          "person",
+          "cup"
+        ]
+      }
+    ],
+    [
+      "Show only bottles and cups on the left",
+      {
+        "action": "detect_only",
+        "camera": "left",
+        "classes": [
+          "bottle",
+          "cup"
+        ]
+      }
+    ],
+    [
+      "오른쪽 탐지 꺼",
+      {
+        "action": "detection_off",
+        "camera": "right"
+      }
+    ],
+    [
+      "왼쪽 박스 안 보이게 해줘",
+      {
+        "action": "detection_off",
+        "camera": "left"
+      }
+    ],
+    [
+      "Turn detection back on for the right camera",
+      {
+        "action": "detection_on",
+        "camera": "right"
+      }
+    ],
+    [
+      "양쪽 탐지 켜",
+      {
+        "action": "detection_on",
+        "camera": "both"
+      }
+    ],
+    [
+      "왼쪽 카메라 초기화",
+      {
+        "action": "reset",
+        "camera": "left"
+      }
+    ],
+    [
+      "Put the right camera back to normal",
+      {
+        "action": "reset",
+        "camera": "right"
+      }
+    ],
+    [
+      "왼쪽 카메라 원래 설정으로 돌려놔",
+      {
+        "action": "reset",
+        "camera": "left"
+      }
+    ],
+    [
+      "오른쪽 전체 클래스 보여줘",
+      {
+        "action": "detect_all",
+        "camera": "right"
+      }
+    ],
+    [
+      "왼쪽 박스를 초록색으로 바꿔",
+      {
+        "action": "set_box_color",
+        "camera": "left",
+        "color": "green"
+      }
+    ],
+    [
+      "Make the right boxes red",
+      {
+        "action": "set_box_color",
+        "camera": "right",
+        "color": "red"
+      }
+    ],
+    [
+      "좌우 카메라 바꿔",
+      {
+        "action": "swap_camera"
+      }
+    ],
+    [
+      "오늘 날씨 어때",
+      {
+        "action": "unknown"
+      }
+    ],
+    [
+      "오른쪽 카메라 꺼",
+      {
+        "action": "unknown"
+      }
+    ]
+  ],
+  "_classes_note": "80 canonical classes, all voice-addressable. 말 (horse) needs a particle because it is also the ordinary word for speech.",
+  "_asr_aliases_note": "컷 (cup) and 팜지 (탐지) are how Whisper-medium measurably writes 컵만 and 탐지 in the demo commands; they are kept as aliases so those commands are understood."
+}

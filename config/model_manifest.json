@@ -1,0 +1,73 @@
+{
+  "project": "drone_seminar_neat",
+  "roots": {
+    "PROJECT": "this project directory (resolved from the script location)",
+    "MODEL_ROOT": "GenAI model storage on the Modalix DevKit (config/default.env, default /media/nvme/llima/models)"
+  },
+  "models": {
+    "yolo26m": {
+      "name": "YOLO26m",
+      "task": "object detection (USB camera 0)",
+      "machine": "devkit",
+      "root": "PROJECT",
+      "path": "assets/models/yolo26m.tar.gz",
+      "filename": "yolo26m.tar.gz",
+      "kind": "file",
+      "format": "SiMa model archive (.tar.gz, compiled for Modalix MLA)",
+      "precision": "INT8, 640x640 input",
+      "runtime": "NEAT C++ Model::Runner (vision process)",
+      "device": "Modalix MLA",
+      "sha256": "ce7bb1aad8b410eb8a3957d73dbf8c007bae86af96192b66f4b4a09a46ca0af4"
+    },
+    "yolo26m_seg": {
+      "name": "YOLO26m-seg",
+      "task": "instance segmentation (USB camera 1)",
+      "machine": "devkit",
+      "root": "PROJECT",
+      "path": "assets/models/yolo26m-seg.tar.gz",
+      "filename": "yolo26m-seg.tar.gz",
+      "kind": "file",
+      "format": "SiMa model archive (.tar.gz, compiled for Modalix MLA)",
+      "precision": "INT8, 640x640 input",
+      "runtime": "NEAT C++ Model::Runner (vision process)",
+      "device": "Modalix MLA",
+      "sha256": "c193a7aa8af15eda19afac03c2bc1b9f9fe81a5891e9af8c8ee5de093e324e51"
+    },
+    "whisper_medium": {
+      "name": "Whisper-medium",
+      "task": "Korean/English speech-to-text",
+      "machine": "devkit",
+      "root": "MODEL_ROOT",
+      "path": "whisper-medium-a16w8",
+      "filename": "whisper-medium-a16w8/ (devkit/, elf_files/)",
+      "kind": "directory",
+      "required_files": [
+        "devkit/whisper_config.json",
+        "devkit/tokenizer.json",
+        "elf_files"
+      ],
+      "format": "SiMa LLiMa compiled GenAI model directory",
+      "precision": "A16W8",
+      "runtime": "pyneat 0.4.0 genai.ASRModel (NEAT GenAI / LLiMa via mlashmcomplex)",
+      "device": "Modalix MLA"
+    },
+    "qwen3_0_6b": {
+      "name": "Qwen3-0.6B",
+      "task": "command interpretation for ambiguous transcripts",
+      "machine": "devkit",
+      "root": "MODEL_ROOT",
+      "path": "Qwen3-0.6B-Autoround-a16w4",
+      "filename": "Qwen3-0.6B-Autoround-a16w4/ (devkit/, elf_files/)",
+      "kind": "directory",
+      "required_files": [
+        "devkit/config.json",
+        "devkit/tokenizer.json",
+        "elf_files"
+      ],
+      "format": "SiMa LLiMa compiled GenAI model directory (AutoRound)",
+      "precision": "A16W4 generation, A16W8 prompt",
+      "runtime": "pyneat 0.4.0 genai.GenAIModel (NEAT GenAI / LLiMa via mlashmcomplex)",
+      "device": "Modalix MLA"
+    }
+  }
+}

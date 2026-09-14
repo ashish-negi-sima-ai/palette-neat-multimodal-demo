@@ -1,0 +1,85 @@
+# Integrated voice + vision pipeline: two USB (UVC) cameras -> YOLO26m detection
+# + YOLO26m-seg segmentation -> 2x CLEAN UDP video + 2x UDP metadata, coordinated
+# with Whisper Medium + Qwen3-0.6B voice inference over one explicitly arbitrated
+# MLA.
+#
+# Inference / output / MLA settings are the ones of the MIPI edition. Camera SELECTION
+# (which USB camera, which capture mode) is configured in config/default.env
+# (USB_CAMERA*) and passed by scripts/start_pipeline.sh; the camera values below are
+# only the fallbacks for a binary started by hand.
+
+camera:
+  format: auto            # MJPG (hardware decode) when offered, else YUYV
+  modes: 1920x1080@30,1920x1080@24,1920x1080@20,1280x720@30,1920x1080@15,640x480@30
+  probe_ms: 2500          # how long each candidate mode is test-streamed on both cameras
+  retry_ms: 2000          # while a camera is unplugged, look for it again this often
+  settle_ms: 2000         # a camera that just reappeared is left alone this long before rebuilding
+  build_timeout_ms: 20000 # a camera graph build that takes longer is abandoned and retried
+
+model:
+  # Project-relative; both archives are inside this project (config/model_manifest.json).
+  detection: assets/models/yolo26m.tar.gz
+  segmentation: assets/models/yolo26m-seg.tar.gz
+  labels: assets/coco_labels.txt
+
+inference:
+  model_size: 640         # both archives are static 1x3x640x640
+  min_score: 0.35
+  nms_iou: 0.50
+  max_detections: 50
+
+output:
+  host: 10.42.0.1          # Neat Insight; start_pipeline.sh passes INSIGHT_HOST
+  #   video    ch0 -> 9000 (detection)      ch1 -> 9001 (segmentation)
+  #   metadata ch0 -> 9100 (object-detection JSON)
+  #            ch1 -> 9101 (segmentation JSON, polygon masks)
+  video_port_base: 9000
+  metadata_port_base: 9100
+  metadata_enabled: true
+  video_pts_from_source: true
+  metadata_clock: frame           # frame | pipeline | source
+  metadata_offset_ms: 0
+  metadata_budget_bytes: 32768    # one UDP datagram
+  bitrate_kbps: 6000
+  video_memory: ev74
+  mask_alpha: 0.50
+  mask_threshold: 0.50
+
+runtime:
+  frames: 0               # 0 = run until SIGINT
+  # Also the granularity at which a streaming worker notices a pause request.
+  pull_timeout_ms: 250
+  # How long open() waits for a stream's FIRST frame.
+  first_frame_timeout_ms: 15000
+  # USB edition recovery. A camera that goes silent or reports a V4L2 error is rebuilt
+  # after camera_restart_ms, ON ITS OWN: the other camera, its YOLO stream and the voice
+  # runtime keep running. A camera that is unplugged is looked for every camera.retry_ms
+  # and picked up again under whatever /dev/videoN Linux gives it. stall_grace_ms: 0
+  # means a missing camera is waited for, never turned into a process exit.
+  stall_grace_ms: 0
+  camera_restart_ms: 5000
+  infer_timeout_ms: 20000
+  # A Model Runner that has lost its MLA residency answers `runtime.output_timeout` for
+  # ever, so it is rebuilt (the log says RUNNER RESTART), at most this many times.
+  max_runner_restarts: 5
+
+mla:
+  # Explicit arbitration of the Machine Learning Accelerator between this pipeline's
+  # continuous YOLO inference and the voice server's Whisper/Qwen inference.
+  enabled: true
+  arbiter_host: 127.0.0.1   # loopback only: the voice server runs on the same board
+  arbiter_port: 8974
+  # How long ACQUIRE waits for BOTH streams to reach their quiescent point.
+  quiesce_timeout_ms: 10000
+  # Backstop: a client that holds the lease without releasing it for this long has
+  # vision resumed under it.
+  lease_ttl_ms: 180000
+  # How often a parked worker consumes the camera Graph during a voice window.
+  pause_poll_ms: 200
+  # What a parked worker does during a voice window (start_pipeline.sh passes
+  # VISION_PAUSE_BEHAVIOUR, default drop):
+  #   drop         keep pulling camera frames and discard them; video keeps streaming,
+  #                no YOLO inference is submitted while Whisper/Qwen hold the MLA
+  #   video        the same (video is encoded inside the graph either way)
+  #   stop-camera  stop the camera graph for the window and rebuild it afterwards
+  pause_behaviour: drop

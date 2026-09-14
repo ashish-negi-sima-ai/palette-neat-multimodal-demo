@@ -1,0 +1,62 @@
+[
+ {
+  "file": "ds_swap_both.wav",
+  "text": "왼쪽 오른쪽 카메라 교체하세요",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_swap_short.wav",
+  "text": "카메라 교체하세요",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_swap_lr.wav",
+  "text": "좌우 카메라 교체",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_reset_left.wav",
+  "text": "왼쪽 카메라 초기화 하세요",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_reset_right.wav",
+  "text": "오른쪽 카메라 초기화",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_reset_clear.wav",
+  "text": "오른쪽 필터 해제",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_color_yellow.wav",
+  "text": "왼쪽 카메라 박스 색상을 노란색으로",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_color_red.wav",
+  "text": "오른쪽 박스를 빨간색으로 바꿔",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_color_green.wav",
+  "text": "왼쪽 바운딩 박스를 초록색으로 바꿔주세요",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_class_horse.wav",
+  "text": "왼쪽에서 말만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_class_tv.wav",
+  "text": "오른쪽에서 티비만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "ds_class_laptop.wav",
+  "text": "왼쪽에서 노트북만 찾아줘",
+  "lang": "ko"
+ }
+]

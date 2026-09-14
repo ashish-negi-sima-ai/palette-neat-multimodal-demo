@@ -1,0 +1,102 @@
+[
+  {
+    "file": "ko_01.wav",
+    "text": "좌우 카메라 바꿔",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_02.wav",
+    "text": "왼쪽 카메라에서 사람만 보여줘",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_03.wav",
+    "text": "오른쪽에서 휴대폰만 찾아",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_04.wav",
+    "text": "왼쪽 바운딩 박스를 빨간색으로 바꿔",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_05.wav",
+    "text": "오른쪽 탐지 꺼",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_06.wav",
+    "text": "왼쪽 탐지 켜",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_07.wav",
+    "text": "왼쪽 화면 꺼",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_08.wav",
+    "text": "왼쪽 화면 켜",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_09.wav",
+    "text": "오른쪽에서 사람만 탐지해",
+    "lang": "ko"
+  },
+  {
+    "file": "ko_10.wav",
+    "text": "왼쪽 카메라 화면 숨겨",
+    "lang": "ko"
+  },
+  {
+    "file": "en_01.wav",
+    "text": "Swap the left and right cameras",
+    "lang": "en"
+  },
+  {
+    "file": "en_02.wav",
+    "text": "Show only people on the left camera",
+    "lang": "en"
+  },
+  {
+    "file": "en_03.wav",
+    "text": "Show only phones on the right camera",
+    "lang": "en"
+  },
+  {
+    "file": "en_04.wav",
+    "text": "Turn off detection on the right camera",
+    "lang": "en"
+  },
+  {
+    "file": "en_05.wav",
+    "text": "Change the left bounding box to red",
+    "lang": "en"
+  },
+  {
+    "file": "en_06.wav",
+    "text": "Hide the left camera view",
+    "lang": "en"
+  },
+  {
+    "file": "en_07.wav",
+    "text": "Show the left camera view",
+    "lang": "en"
+  },
+  {
+    "file": "en_08.wav",
+    "text": "Enable detection on the left camera",
+    "lang": "en"
+  },
+  {
+    "file": "unk_ko.wav",
+    "text": "왼쪽에서 뭐 재미있는 것 좀 찾아줘",
+    "lang": "ko"
+  },
+  {
+    "file": "unk_en.wav",
+    "text": "Do something interesting on the left",
+    "lang": "en"
+  }
+]

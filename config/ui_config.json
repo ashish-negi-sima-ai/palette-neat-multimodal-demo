@@ -1,0 +1,116 @@
+{
+  "_comment": [
+    "The ONE configuration file for the Palette NEAT SDK Demo UI.",
+    "  web.port           8022 - see the note under \"web\" below",
+    "  insight.vf_port    8081 - Insight's vf process: /static/drawing.js and POST /offer",
+    "  insight.api_port   9900 - Insight's API",
+    "  video/metadata UDP 9000+N / 9100+N - Insight's ingest ports, the DevKit sends to them",
+    "Command-line flags on run.sh / backend/server.py override anything here."
+  ],
+  "web": {
+    "_port": [
+      "WHY 8022 AND NOT 9910.",
+      "",
+      "This UI usually runs INSIDE the Neat SDK container (172.18.0.2).  A port",
+      "opened there is reachable at https://127.0.0.1:<port> only from inside",
+      "that container - the SDK publishes a FIXED list of ports to the host and",
+      "the LAN, and a new one is not on it:",
+      "",
+      "  neat --json -> exposedPorts",
+      "    tcp  9900 mainUI      9999 codeUI     10000 codeUIHttps",
+      "    tcp  8081 videoUI     8554 rtsp.tcp    8022 webSSH",
+      "    udp  9000-9003 videoUDP  9100-9103 metadataUDP  40000-40007 webRTC",
+      "",
+      "Measured, not assumed: a plain HTTP listener started in the container on",
+      "8022 answered http://10.42.0.1:8022 from the DevKit, while 9910 gave",
+      "'connection refused' - which is exactly the reported symptom, that",
+      "https://127.0.0.1:9910 cannot be opened.",
+      "",
+      "Of that published list, 9900 (Insight), 8081 (vf), 8554 (rtsp), 9999 and",
+      "10000 (the code UI) are all in use inside the container.  8022 is the",
+      "only published TCP port with nothing listening on it, so it is the only",
+      "one this UI can take and still be reachable from a browser.  It is the",
+      "SDK's web-SSH port; nothing serves it in this image, and if you ever",
+      "need web SSH, move this UI with ./run.sh --port N and open it from",
+      "inside the container instead.",
+      "",
+      "Running this on the SDK HOST instead of in the container removes the",
+      "whole question - any port works there.  ./run.sh prints which of the two",
+      "situations it is in and which URL actually works."
+    ],
+    "port": 8022,
+    "bind": "0.0.0.0",
+    "tls": {
+      "enabled": true,
+      "cert": "/sdk-cert/neat-sdk.pem",
+      "key": "/sdk-cert/neat-sdk-key.pem",
+      "generate_if_missing": true,
+      "generated_dir": "runtime/tls"
+    }
+  },
+  "insight": {
+    "_host": [
+      "The machine running Neat Insight.  This is NOT necessarily the machine",
+      "running this UI: Insight lives in the Neat SDK container on the SDK host,",
+      "so running the UI on the DevKit means pointing this at the SDK host.",
+      "'local' / '127.0.0.1' means 'Insight is on this same machine'.",
+      "Override with ./run.sh --insight-host <ip>."
+    ],
+    "host": "127.0.0.1",
+    "api_port": 9900,
+    "vf_port": 8081,
+    "video_udp_base": 9000,
+    "metadata_udp_base": 9100
+  },
+  "sources": {
+    "0": {
+      "channel": 0,
+      "task": "detection",
+      "metadata_type": "object-detection",
+      "name": "Source 0",
+      "detail": "USB camera 0 - YOLO26m detection",
+      "model": "YOLO26m Detection"
+    },
+    "1": {
+      "channel": 1,
+      "task": "segmentation",
+      "metadata_type": "segmentation",
+      "name": "Source 1",
+      "detail": "USB camera 1 - YOLO26m-seg segmentation",
+      "model": "YOLO26m Segmentation"
+    }
+  },
+  "panels": {
+    "left": "0",
+    "right": "1"
+  },
+  "voice": {
+    "_comment": [
+      "The voice runtime (Whisper-medium + Qwen3-0.6B on the Modalix MLA) runs ON THE",
+      "DEVKIT, on loopback, owned by ./run.sh, which passes --voice-host/--voice-port",
+      "from config/default.env (VOICE_PORT); host/port here are only fallbacks.",
+      "language is the language the page starts in at every load: ko, en or auto.",
+      "The operator can switch it on the page at any time (Language: Auto | KO | EN);",
+      "the choice lasts for that page."
+    ],
+    "host": "127.0.0.1",
+    "port": 8983,
+    "language": "ko",
+    "request_timeout_s": 120,
+    "health_timeout_s": 4
+  },
+  "render": {
+    "_latency": [
+      "video_sync_buffer_ms is deliberate browser latency: each decoded frame is held",
+      "this long so the metadata for that frame has arrived and the boxes sit on the",
+      "object. 45 ms is the lowest measured value with no missed overlays on either",
+      "stream. Override with ./run.sh --sync-buffer-ms N."
+    ],
+    "video_sync_buffer_ms": 45,
+    "metadata_retention_ms": 2000,
+    "metadata_hold_ms": 150,
+    "mask_opacity": 0.45,
+    "confidence_threshold": 0.0,
+    "box_width": 2
+  }
+}

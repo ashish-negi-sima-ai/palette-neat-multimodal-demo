@@ -1,0 +1,72 @@
+[
+ {
+  "file": "tts_en_bottle.wav",
+  "text": "Show only bottles on the right camera",
+  "lang": "en"
+ },
+ {
+  "file": "tts_en_car.wav",
+  "text": "Show only cars on the left camera",
+  "lang": "en"
+ },
+ {
+  "file": "tts_en_chair.wav",
+  "text": "Show only chairs on the left camera",
+  "lang": "en"
+ },
+ {
+  "file": "tts_ko_bicycle.wav",
+  "text": "왼쪽 카메라에서 자전거만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_bottle.wav",
+  "text": "왼쪽 카메라에서 물병만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_bus.wav",
+  "text": "오른쪽 카메라에서 버스만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_car.wav",
+  "text": "왼쪽 카메라에서 자동차만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_cat.wav",
+  "text": "오른쪽 카메라에서 고양이만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_chair.wav",
+  "text": "왼쪽 카메라에서 의자만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_dog.wav",
+  "text": "오른쪽 카메라에서 강아지만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_laptop.wav",
+  "text": "왼쪽 카메라에서 노트북만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_person.wav",
+  "text": "왼쪽 카메라에서 사람만 보여줘",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_swap.wav",
+  "text": "좌우 카메라 바꿔",
+  "lang": "ko"
+ },
+ {
+  "file": "tts_ko_truck.wav",
+  "text": "오른쪽 카메라에서 트럭만 보여줘",
+  "lang": "ko"
+ }
+]
