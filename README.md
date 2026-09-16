@@ -12,6 +12,9 @@ typed commands.
 
 The deterministic command parser is ordinary software logic. It is not an AI workload.
 
+For a single MIPI camera with YOLO26 and live Neat Insight output, see the
+[standalone MIPI object detector](mipi-detector/README.md).
+
 ```
 ./run.sh              preflight, then start everything on the DevKit; open https://<devkit>:8022
 ./run.sh --stop-all   stop everything this project started
