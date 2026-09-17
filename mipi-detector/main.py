@@ -15,7 +15,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def arguments(argv=None):
+def arguments(argv=None, configure=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, default=ROOT / "models/yolo26m-det-int8-b1.tar.gz")
     parser.add_argument("--labels", type=Path, default=ROOT / "assets/coco_labels.txt")
@@ -38,6 +38,8 @@ def arguments(argv=None):
     parser.add_argument("--timeout-ms", type=int, default=15000, help="Fail if no inference result arrives within this interval")
     parser.add_argument("--summary", type=Path, help="Write final run statistics as JSON")
     parser.add_argument("--print-backend", action="store_true")
+    if configure:
+        configure(parser)
     args = parser.parse_args(argv)
     for name in ("model", "labels"):
         if not getattr(args, name).is_file():
@@ -61,7 +63,7 @@ def arguments(argv=None):
     return args
 
 
-def make_graph(neat, args):
+def make_graph(neat, args, *, include_frames=False):
     camera = neat.CameraInputOptions()
     if args.camera:
         camera.camera_name = args.camera
@@ -107,7 +109,10 @@ def make_graph(neat, args):
     detector.add(neat.nodes.output("detections", neat.OutputOptions.latest()))
 
     graph = neat.Graph("mipi_yolo26")
-    split = neat.graphs.branch("camera", ["inference"] if args.no_stream else ["video", "inference"])
+    branches = ["inference"] if args.no_stream else ["video", "inference"]
+    if include_frames:
+        branches.append("frame")
+    split = neat.graphs.branch("camera", branches)
     graph.connect(source, split)
     if not args.no_stream:
         video_options = neat.VideoSenderOptions.h264_rtp_udp_from_raw(args.width, args.height, args.fps)
@@ -120,6 +125,10 @@ def make_graph(neat, args):
         video.add(neat.groups.video_sender(video_options))
         graph.connect(split, video)
     graph.connect(split, detector)
+    if include_frames:
+        frames = neat.Graph("frames")
+        frames.add(neat.nodes.output("frame", neat.OutputOptions.latest()))
+        graph.connect(split, frames)
     return graph, model
 
 

@@ -5,6 +5,9 @@ A standalone Python application combining the Neat
 and [YOLO26 detector example](../../sima-neat/apps/examples/object-detection/yolo26-object-detector/README.md).
 It uses this repository's `models/yolo26m-det-int8-b1.tar.gz` and COCO labels.
 
+For a mission console with natural-language appearance checks, Gemma 4 and
+clickable snapshot evidence, see [SCOUT](SCOUT.md).
+
 ```text
 MIPI camera (NV12) --+--> H.264 encoder --> RTP/UDP --> Neat Insight
                     +--> YOLO26 on MLA --> boxes --> metadata --> browser overlay

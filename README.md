@@ -14,6 +14,8 @@ The deterministic command parser is ordinary software logic. It is not an AI wor
 
 For a single MIPI camera with YOLO26 and live Neat Insight output, see the
 [standalone MIPI object detector](mipi-detector/README.md).
+The [SCOUT mission console](mipi-detector/SCOUT.md) adds Gemma 4 snapshot
+inspection, live tracking and visual evidence using the same camera.
 
 ```
 ./run.sh              preflight, then start everything on the DevKit; open https://<devkit>:8022
