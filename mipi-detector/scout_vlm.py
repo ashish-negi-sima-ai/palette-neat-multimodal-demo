@@ -40,6 +40,17 @@ def verify_prompt(description, object_class):
     )
 
 
+def watch_prompt(object_class):
+    subject = ('a person or a movable object, such as a bag, bottle, cup, chair or tool'
+               if object_class == 'any' else f'a {object_class}')
+    return (f'This image is the selected landing/payload watch area. Is {subject} visible in it? '
+            'Ignore the floor, table surface, walls and shadows. Describe only visible evidence. '
+            'Use uncertain if the view is unclear. Return only JSON with exactly two keys: '
+            '"match" ("yes", "no", or "uncertain") and "reason" (at most twelve words). '
+            'This is an object observation, not a flight or landing safety assessment. '
+            'Start with { and end with }. Do not use markdown fences.')
+
+
 def worker(model_path, requests, responses, stopping, cancelling, timeout_s):
     """Only copied 480×480 RGB evidence enters this process; no camera buffers."""
     try:
@@ -74,7 +85,8 @@ def worker(model_path, requests, responses, stopping, cancelling, timeout_s):
             if bgr is None or bgr.shape != (480, 480, 3):
                 raise ValueError('Verification requires one 480×480 evidence image')
             request = neat.genai.GenerationRequest()
-            request.prompt = verify_prompt(job['query'], job['object_class'])
+            request.prompt = (watch_prompt(job['object_class']) if job.get('camera_id') == 'usb'
+                              else verify_prompt(job['query'], job['object_class']))
             request.images = [neat.Tensor.from_numpy(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
                               copy=True, image_format=neat.PixelFormat.RGB)]
             request.max_new_tokens = 80

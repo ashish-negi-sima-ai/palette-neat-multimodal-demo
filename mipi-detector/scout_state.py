@@ -30,10 +30,11 @@ class Track:
 class Tracker:
     """Conservative, class-aware image-space tracker; expired IDs are never reused."""
 
-    def __init__(self, max_gap=0.8):
+    def __init__(self, max_gap=0.8, prefix='T'):
         self.tracks = {}
         self.next_id = 1
         self.max_gap = max_gap
+        self.prefix = prefix
 
     def update(self, objects, now):
         self.tracks = {k: t for k, t in self.tracks.items() if now - t.seen <= self.max_gap}
@@ -70,7 +71,7 @@ class Tracker:
             assigned_objects.add(i)
         for i, obj in enumerate(objects):
             if i not in assigned_objects:
-                key = f'T{self.next_id:03d}'
+                key = f'{self.prefix}{self.next_id:03d}'
                 self.next_id += 1
                 track = Track(key, obj['label'], list(obj['bbox']), obj['confidence'], now)
                 self.tracks[key] = track
@@ -127,8 +128,11 @@ class MissionState:
         self.zone_enabled = False
         self.zone = [0.65, 0.48, 0.30, 0.46]
         self.zone_inside = False
+        self.watch = None
 
     def event(self, kind, title, detail='', jpeg=None, **extra):
+        extra.setdefault('camera_id', 'mipi')
+        extra.setdefault('camera_label', 'MIPI 01')
         self.event_counter += 1
         key = str(self.event_counter)
         event = dict(id=key, kind=kind, title=title, detail=detail,
@@ -159,8 +163,7 @@ class MissionState:
             self.inspection_requested = True
             self.zone_enabled, self.zone_inside = zone, False
             if changed:
-                self.events.clear()
-                self.evidence.clear()
+                self.events = deque((e for e in self.events if e.get('camera_id') == 'usb'), maxlen=24)
                 self.event('mission', 'Mission started', self.query)
 
     def reset(self):
@@ -170,8 +173,9 @@ class MissionState:
             self.phase = 'idle'
             self.candidate = None
             self.zone_enabled = False
-            self.events.clear()
-            self.evidence.clear()
+            self.events = deque((e for e in self.events if e.get('camera_id') == 'usb'), maxlen=24)
+            keep = {e['id'] for e in self.events}
+            self.evidence = {k: v for k, v in self.evidence.items() if k in keep}
             self.last_verification = None
             self.last_verdict = None
             self.inspection_requested = False
@@ -257,4 +261,5 @@ class MissionState:
                                     fps=round(self.fps, 1), frames=self.frames,
                                     observation_age_s=round(time.monotonic() - self.last_frame_at, 2)
                                     if self.last_frame_at else None),
-                        zone=dict(enabled=self.zone_enabled, inside=self.zone_inside, bbox=self.zone))
+                        zone=dict(enabled=self.zone_enabled, inside=self.zone_inside, bbox=self.zone),
+                        watch=self.watch.snapshot() if self.watch else None)

@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 import main as detector
 from scout_state import MissionState
 from scout_vlm import VLMWorker, validate_model
+from scout_watch import WatchState, UsbWatch
 
 HERE = Path(__file__).resolve().parent
 
@@ -40,6 +41,10 @@ def configure(parser):
     parser.add_argument('--mission', default='', help='Optional initial appearance description')
     parser.add_argument('--object-class', default='person')
     parser.add_argument('--watch-zone', action='store_true')
+    parser.add_argument('--usb-camera', default=None, help='Optional USB /dev/v4l/by-id path, or auto')
+    parser.add_argument('--usb-width', type=int, default=1280)
+    parser.add_argument('--usb-height', type=int, default=720)
+    parser.add_argument('--usb-fps', type=int, default=15, help='USB watch processing rate')
 
 
 def evidence_image(frame, bbox, width, height):
@@ -59,6 +64,13 @@ def evidence_image(frame, bbox, width, height):
     x1, y1 = max(0, int(x - w * .08)), max(0, int(y - h * .08))
     x2, y2 = min(width, int(x + w * 1.08)), min(height, int(y + h * 1.08))
     crop = bgr[y1:y2, x1:x2]
+    return jpeg_image(crop)
+
+
+def jpeg_image(crop):
+    import cv2
+    import numpy as np
+
     if not crop.size:
         raise RuntimeError('Empty candidate crop')
     scale = min(480 / crop.shape[1], 480 / crop.shape[0])
@@ -200,7 +212,9 @@ class Console:
                 elif path == '/api/config':
                     self.send(200, dict(channel=console.args.channel, width=console.args.width,
                         height=console.args.height, requested_fps=console.args.fps,
-                        classes=console.state.labels, model='Gemma 4 E4B', source='MIPI 01'))
+                        classes=console.state.labels, model='Gemma 4 E4B', source='MIPI 01',
+                        usb=dict(channel=console.args.channel+1, width=console.args.usb_width,
+                                 height=console.args.usb_height, source='USB 02') if console.args.usb_camera else None))
                 elif path.startswith('/api/evidence/') and path.endswith('.jpg'):
                     key = path.rsplit('/', 1)[-1][:-4]
                     with console.state.lock:
@@ -224,7 +238,10 @@ class Console:
                     path = urlsplit(self.path).path
                     if path == '/offer':
                         channel = parse_qs(urlsplit(self.path).query).get('channel', [''])[0]
-                        if channel != str(console.args.channel):
+                        channels = [str(console.args.channel)]
+                        if console.args.usb_camera:
+                            channels.append(str(console.args.channel+1))
+                        if channel not in channels:
                             raise ValueError('Unknown camera channel')
                         url = f'https://{console.args.host}:{console.args.insight_vf_port}/offer?channel={channel}'
                         req = Request(url, data=json.dumps(body).encode(),
@@ -241,13 +258,41 @@ class Console:
                             raise ValueError('Unknown mission fields')
                         with console.state.lock:
                             console.state.start(body.get('query'), body.get('object_class'), body.get('zone', False))
-                            console.vlm.cancel()
+                            if not console.vlm.active or console.vlm.active.get('camera_id') != 'usb':
+                                console.vlm.cancel()
                         self.send(200, console.state.snapshot())
                     elif path == '/api/reset':
                         with console.state.lock:
                             console.state.reset()
-                            console.vlm.cancel()
+                            if not console.vlm.active or console.vlm.active.get('camera_id') != 'usb':
+                                console.vlm.cancel()
                         self.send(200, console.state.snapshot())
+                    elif path == '/api/watch':
+                        if set(body) - {'enabled', 'object_class', 'zone'}:
+                            raise ValueError('Unknown watch fields')
+                        with console.state.lock:
+                            watch = console.state.watch
+                            if watch is None:
+                                raise ValueError('USB watch is not configured')
+                            watch.configure(body.get('enabled', watch.enabled),
+                                            body.get('object_class', watch.object_class),
+                                            body.get('zone', watch.zone))
+                            console.state.event('mission', 'Watch area updated',
+                                ('Watching ' + ('people and payload props' if watch.object_class == 'any' else watch.object_class))
+                                if watch.enabled else 'Area monitoring stopped.',
+                                camera_id='usb', camera_label='USB 02')
+                            if console.vlm.active and console.vlm.active.get('camera_id') == 'usb':
+                                console.vlm.cancel()
+                        self.send(200, console.state.snapshot())
+                    elif path == '/api/watch/inspect':
+                        with console.state.lock:
+                            watch = console.state.watch
+                            if watch is None or watch.snapshot()['status'] != 'live':
+                                raise ValueError('Wait for a live USB view')
+                            if console.state.vlm_status != 'ready' or console.state.busy:
+                                raise ValueError('Wait for Gemma to be ready')
+                            watch.inspection_requested = True
+                        self.send(202, console.state.snapshot())
                     elif path == '/api/vlm/retry':
                         console.retry_vlm.set()
                         self.send(202, {'status': 'Retry requested'})
@@ -290,15 +335,29 @@ def run(args):
     if len(labels) != 80:
         raise ValueError('The supplied YOLO26 model needs 80 COCO labels')
     state = MissionState(labels, auto_checks=args.auto_checks)
+    if args.usb_camera:
+        state.watch = WatchState(labels)
     vlm = VLMWorker(args.vlm_model, args.vlm_timeout)
     console = Console(args, state, vlm)
     stopping = threading.Event()
     handlers = {s: signal.signal(s, lambda *_: stopping.set())
                 for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
-    runtime = cache = graph = model = preview = None
+    runtime = cache = graph = model = preview = usb = None
     capture_args = copy(args)
     capture_args.no_stream = True
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    def pause_capture():
+        nonlocal cache, runtime, graph, model
+        state.pause_capture()
+        if usb:
+            usb.pause()
+        if cache:
+            cache.close()
+        if runtime:
+            runtime.close()
+        cache = runtime = graph = model = None
+
     try:
         console.start()
         print(f'SCOUT console: https://{socket.gethostname()}:{args.port}', flush=True)
@@ -337,6 +396,8 @@ def run(args):
             print(graph.describe_backend(False), flush=True)
         runtime = graph.build(options)
         cache = FrameCache(runtime, preview)
+        if args.usb_camera:
+            usb = UsbWatch(neat, args, state, Preview, jpeg_image)
         meta_options = neat.MetadataSenderOptions()
         meta_options.host, meta_options.channel = args.host, args.channel
         meta_options.metadata_port_base = args.metadata_port_base
@@ -348,18 +409,15 @@ def run(args):
         while not stopping.is_set() and (not args.frames or state.frames < args.frames):
             if console.retry_vlm.is_set():
                 console.retry_vlm.clear()
-                state.pause_capture()
-                if cache:
-                    cache.close()
-                if runtime:
-                    runtime.close()
-                cache = runtime = graph = model = None
+                pause_capture()
                 vlm.close()
                 with state.lock:
                     state.busy = False
                     state.candidate = None
                     state.vlm_error = None
                     state.vlm_status = 'loading'
+                    if state.watch:
+                        state.watch.checking = state.watch.inspection_requested = False
                 try:
                     validate_model(args.vlm_model)
                     vlm.start()
@@ -374,6 +432,8 @@ def run(args):
                         state.vlm_status, state.vlm_error = 'error', message['error']
                         state.busy = False
                         state.candidate = None
+                        if state.watch:
+                            state.watch.checking = False
                         if state.query:
                             state.phase = 'searching'
                     print('VLM error: ' + message['error'], flush=True)
@@ -381,7 +441,10 @@ def run(args):
                 elif message['kind'] == 'result' and vlm.active:
                     job = vlm.active
                     vlm.active = None
-                    state.apply_snapshot_result(job, message, time.monotonic())
+                    if job.get('camera_id') == 'usb':
+                        usb.apply_result(job, message)
+                    else:
+                        state.apply_snapshot_result(job, message, time.monotonic())
                     print('VERIFICATION ' + json.dumps({k: v for k, v in message.items()}), flush=True)
             if runtime is None:
                 if state.busy or state.vlm_status == 'loading':
@@ -393,9 +456,19 @@ def run(args):
                 graph, model = detector.make_graph(neat, capture_args, include_frames=True)
                 runtime = graph.build(options)
                 cache = FrameCache(runtime, preview)
+                if usb:
+                    usb.resume()
                 frame_times.clear()
                 last_frame = time.monotonic()
                 continue
+            if usb and not state.busy and state.vlm_status == 'ready':
+                job = usb.inspection_job()
+                if job:
+                    state.busy = True
+                    state.vlm_requests += 1
+                    pause_capture()
+                    vlm.submit(job)
+                    continue
             sample = runtime.pull('detections', 250)
             now = time.monotonic()
             if sample is None:
@@ -443,10 +516,7 @@ def run(args):
                 # This board's LLiMa inference overflows the active MIPI receiver.
                 # Stop capture AND drain YOLO before handing the MLA to Gemma.
                 # A result describes only the saved snapshot, not a future track.
-                state.pause_capture()
-                cache.close()
-                runtime.close()
-                cache = runtime = graph = model = None
+                pause_capture()
                 vlm.submit(job)
             if now - last_report >= 2:
                 print(f'frames={state.frames} fps={state.fps:.1f} tracks={len(tracks)} '
@@ -457,10 +527,14 @@ def run(args):
         raise
     finally:
         vlm.close()
+        if usb is not None:
+            usb.pause()
         if cache is not None:
             cache.close()
         if runtime is not None:
             runtime.close()
+        if usb is not None:
+            usb.close()
         if preview is not None:
             preview.close()
         console.close()
@@ -482,6 +556,13 @@ def main(argv=None):
         raise ValueError('Ports must be between 1 and 65535')
     if not 1 <= args.vlm_timeout <= 60:
         raise ValueError('Use a VLM timeout of 1–60 seconds')
+    if args.usb_camera:
+        if args.usb_width < 160 or args.usb_height < 120 or args.usb_width % 2 or args.usb_height % 2:
+            raise ValueError('USB dimensions must be even and at least 160×120')
+        if not 1 <= args.usb_fps <= 30:
+            raise ValueError('USB FPS must be 1–30')
+        if any(base + args.channel + 1 > 65535 for base in (args.video_port_base, args.metadata_port_base)):
+            raise ValueError('USB channel port is out of range')
     if bool(args.cert) != bool(args.key):
         raise ValueError('Supply both --cert and --key')
     if not (args.vlm_model / 'devkit/vlm_config.json').is_file():

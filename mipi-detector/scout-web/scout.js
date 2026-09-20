@@ -5,6 +5,10 @@ const ctx = overlay.getContext('2d'), focusCtx = focus.getContext('2d');
 let config, state, source, timelineKey = '', focusedId = null, focusBox = null;
 let lastFrame = 0, lastMessage = null, lastStateAt = 0;
 let reconnectAfterPause = false;
+const usbVideo=$('usb-video'), usbOverlay=$('usb-overlay'), usbCtx=usbOverlay.getContext('2d');
+const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
+let usbSource, usbLastFrame=0, usbMessage=null, usbReconnect=false, selectedCamera='mipi';
+let drawing=false, dragStart=null, draftZone=null;
 const phaseNames = {idle:'STANDBY', searching:'FINDING SUBJECT', verifying:'INSPECTING', reviewed:'REVIEW READY'};
 const number = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 
@@ -95,7 +99,7 @@ function drawFrame(payload) {
 function evidenceDialog(event) {
   $('evidence-image').src=event.image;$('evidence-title').textContent=event.title;
   $('evidence-detail').textContent=event.detail;
-  $('evidence-time').textContent=`MIPI 01 · ${event.track_id || ''} · Camera PTS ${event.source_pts_ms} ms · Captured ${new Date(event.captured_time*1000).toLocaleTimeString()}`;
+  $('evidence-time').textContent=`${event.camera_label||'MIPI 01'} · ${event.track_id || ''} · ${event.camera_id==='usb'?'Received':'Camera'} PTS ${event.source_pts_ms} ms · Captured ${new Date(event.captured_time*1000).toLocaleTimeString()}`;
   $('evidence-dialog').showModal();
 }
 function renderTimeline(events) {
@@ -111,9 +115,9 @@ function renderTimeline(events) {
   }
   for(const event of events){
     const card=document.createElement('article');card.className='event '+event.kind;
-    if(event.image){const button=document.createElement('button'),image=document.createElement('img');image.src=event.image;image.alt='Verification evidence for '+(event.track_id||'subject');button.title='Inspect the image Gemma examined';button.append(image);button.onclick=()=>evidenceDialog(event);card.append(button);}
+    if(event.image){const button=document.createElement('button'),image=document.createElement('img');image.src=event.image;image.alt='Saved evidence from '+(event.camera_label||'MIPI 01');button.title='Open saved camera evidence';button.append(image);button.onclick=()=>evidenceDialog(event);card.append(button);}
     const content=document.createElement('div'),time=document.createElement('small'),title=document.createElement('strong'),detail=document.createElement('p');
-    time.textContent=new Date(event.time*1000).toLocaleTimeString()+(event.track_id?' · '+event.track_id:'');
+    time.textContent=(event.camera_label||'MIPI 01')+' · '+new Date(event.time*1000).toLocaleTimeString()+(event.track_id?' · '+event.track_id:'');
     title.textContent=event.title;detail.textContent=event.detail;content.append(time,title,detail);card.append(content);root.append(card);
   }
 }
@@ -123,7 +127,8 @@ function renderState(next){
   state=next;lastStateAt=performance.now();
   const phase=state.phase;$('phase').textContent=phaseNames[phase]||phase;$('phase').className='phase '+phase;
   const live=state.camera.status==='live'&&state.camera.observation_age_s<2;
-  $('connection').textContent=live?'● SYSTEM LIVE':state.camera.status.toUpperCase();$('connection').className='connection'+(live?' live':'');
+  const liveCount=Number(live)+Number(state.watch?.status==='live');
+  $('connection').textContent=state.watch?`● ${liveCount}/2 CAMERAS LIVE`:live?'● SYSTEM LIVE':state.camera.status.toUpperCase();$('connection').className='connection'+(live?' live':'');
   const verdict=state.last_verdict;
   const messages={idle:'Describe a visible subject. Each check briefly pauses capture, then returns to live detection.',searching:`Waiting for a clear ${state.object_class}: ${state.query}`,verifying:`Gemma is checking a saved snapshot. Live capture resumes after the answer.`,reviewed:verdict?`${verdict.match==='yes'?'Snapshot matches':verdict.match==='no'?'Snapshot does not match':'A clearer view is needed'}. ${verdict.reason} Inspect again for a fresh observation.`:'Check inconclusive. Inspect another clear view.'};
   $('mission-message').textContent=state.vlm.status==='loading'?'Gemma is loading. The camera starts when the model is ready.':messages[phase]||'';
@@ -139,8 +144,9 @@ function renderState(next){
   $('start').disabled=state.vlm.busy || state.vlm.status!=='ready';
   $('vlm-status').textContent=state.vlm.busy?'Examining evidence':({loading:'Loading model',ready:'Ready',error:'Unavailable'}[state.vlm.status]||state.vlm.status);
   $('vlm-dot').className=state.vlm.status==='ready'?'ready':'';$('retry').hidden=state.vlm.status!=='error';
-  metric('metric-detection',live?state.camera.fps:null,'fps');metric('metric-vlm',number(state.vlm.latency_s)?.toFixed(2)??null,'s');
-  metric('metric-age',number(state.camera.observation_age_s)!==null?Math.round(state.camera.observation_age_s*1000):null,'ms');
+  metric('metric-vlm',number(state.vlm.latency_s)?.toFixed(2)??null,'s');
+  renderWatch(state.watch);
+  renderPerformance();
   if(state.camera.error)reportError('Camera unavailable. See the application log.');else if(state.vlm.error)reportError('Gemma is unavailable. Retry the model or check the application log.');else reportError('');
   renderTimeline(state.events);
 }
@@ -156,24 +162,120 @@ $('close-dialog').onclick=()=>$('evidence-dialog').close();
 $('evidence-dialog').onclick=event=>{if(event.target===$('evidence-dialog'))event.target.close();};
 async function poll(){try{renderState(await api('/api/state'));}catch(e){reportError('Connection to Modalix lost. Reconnecting…');$('connection').textContent='DISCONNECTED';$('connection').className='connection';}setTimeout(poll,350);}
 function openVideo(){
-  // Restarting capture creates a new encoder RTP clock. Re-negotiate deliberately
-  // instead of displaying a stalled frame from the previous capture session.
+  // Re-negotiate after a declared pause to clear the browser's old frame buffer.
   source?.stop();lastFrame=0;lastMessage=null;clearFocus();
   ctx.clearRect(0,0,overlay.width,overlay.height);$('video-empty').hidden=false;
   source=InsightSource.open({channel:config.channel,video,syncBufferMs:180,retentionMs:1200,holdMs:0,onFrame:drawFrame,
-    onStatus:status=>{$('video-status').textContent=status.width?`${status.width} × ${status.height} · ${status.text}`:status.text;metric('metric-video',status.phase==='live'?number(status.fps):null,'fps');}});
+    onStatus:status=>{$('video-status').textContent=status.width?`${status.width} × ${status.height} · ${status.text}`:status.text;if(selectedCamera==='mipi')metric('metric-video',status.phase==='live'?number(status.fps):null,'fps');}});
 }
+
+function selectCamera(id){
+  if(id==='usb'&&!config?.usb)return;
+  selectedCamera=id;
+  $('primary-camera').append($(id==='mipi'?'mipi-panel':'usb-panel'));
+  if(config?.usb)$('secondary-camera').append($(id==='mipi'?'usb-panel':'mipi-panel'));
+  $('find-panel').hidden=id!=='mipi';$('watch-panel').hidden=id!=='usb';
+  document.querySelector('.focus-panel').hidden=id!=='mipi';
+  for(const camera of ['mipi','usb']){
+    $('select-'+camera).classList.toggle('selected',camera===id);
+    $('select-'+camera).setAttribute('aria-pressed',String(camera===id));
+  }
+  renderPerformance();
+}
+function renderPerformance(){
+  if(!state)return;
+  const camera=selectedCamera==='usb'?state.watch:state.camera;
+  const live=camera?.status==='live'&&camera.observation_age_s<2;
+  metric('metric-detection',live?camera.fps:null,'fps');
+  metric('metric-age',live?Math.round(camera.observation_age_s*1000):null,'ms');
+  const status=(selectedCamera==='usb'?usbSource:source)?.status();
+  metric('metric-video',live&&status?.phase==='live'?number(status.fps):null,'fps');
+}
+function renderWatch(watch){
+  if(!watch)return;
+  $('mipi-strip-status').textContent=state.camera.status==='live'?`${state.camera.fps} fps · live`:state.camera.status;
+  $('usb-strip-status').textContent=watch.status==='live'?`${watch.fps} fps · ${watch.occupied?'occupied':'observing'}`:watch.status;
+  $('watch-enabled').checked=watch.enabled;$('watch-class').value=watch.object_class;
+  const label=watch.status!=='live'?watch.status.toUpperCase():!watch.enabled?'WATCH OFF':watch.occupied===null?'OBSERVING':watch.occupied?'OCCUPIED':'NO WATCHED OBJECTS';
+  $('watch-status').textContent=label;
+  $('watch-status').className='phase '+(watch.occupied?'occupied':watch.occupied===false?'clear':'');
+  $('usb-scene-state').textContent=label;
+  $('usb-rate').textContent=watch.status==='live'?`${watch.fps} detection fps`:'No live observations';
+  $('inspect-area').disabled=state.vlm.busy||state.vlm.status!=='ready'||watch.status!=='live'||watch.inspection_requested;
+  $('watch-vlm-status').textContent=watch.checking?'Inspecting area':state.vlm.busy?'Checking MIPI snapshot':state.vlm.status;
+  $('watch-message').textContent=watch.error?'USB camera unavailable. Reconnect it; the MIPI view can continue.':
+    watch.checking?'Gemma is examining the saved area crop. Both cameras resume after the answer.':
+    watch.last_verdict?`Last snapshot: ${watch.last_verdict.reason} Live occupancy comes from current detections.`:
+    watch.occupied?'An object overlaps the marked area. Its image is saved in the mission timeline.':
+    'Events report detected objects in this area. Unrecognized objects may not be detected.';
+  const paused=['paused','resuming'].includes(watch.status);
+  $('usb-pause').hidden=!paused;
+  if(paused){usbReconnect=true;usbSource?.expectSourcePause('Inspecting a saved snapshot',6000);usbCtx.clearRect(0,0,usbOverlay.width,usbOverlay.height);}
+  if(watch.status==='live'&&usbReconnect){usbReconnect=false;openUsbVideo();}
+}
+function drawUsb(payload){
+  if(!payload.ready||!usbVideo.videoWidth)return;
+  usbLastFrame=performance.now();$('usb-empty').hidden=true;
+  if(usbOverlay.width!==usbVideo.videoWidth||usbOverlay.height!==usbVideo.videoHeight){usbOverlay.width=usbVideo.videoWidth;usbOverlay.height=usbVideo.videoHeight;}
+  usbCtx.clearRect(0,0,usbOverlay.width,usbOverlay.height);
+  usbMessage=payload.message?.data||null;
+  const current=usbMessage&&state?.watch&&usbMessage.generation===state.watch.generation;
+  const objects=current?usbMessage.objects||[]:[];
+  const scale=usbOverlay.width/800;
+  for(const obj of objects){
+    const [x,y,w,h]=obj.bbox;
+    usbCtx.strokeStyle=obj.inside?'#ffc779':'#77ced8';usbCtx.lineWidth=scale;
+    usbCtx.strokeRect(x,y,w,h);usbCtx.font=`${11*scale}px sans-serif`;
+    usbCtx.fillStyle='#07131be6';usbCtx.fillRect(x,Math.max(0,y-21*scale),150*scale,21*scale);
+    usbCtx.fillStyle=obj.inside?'#ffc779':'#77ced8';
+    usbCtx.fillText(`${obj.id} · ${obj.label}`,x+5*scale,Math.max(15*scale,y-6*scale));
+  }
+  const zone=draftZone||state?.watch?.zone;
+  if(zone&&(state?.watch?.enabled||drawing)){
+    const [x,y,w,h]=zone.map((v,i)=>v*(i%2?usbOverlay.height:usbOverlay.width));
+    const occupied=current&&state.watch.status==='live'&&state.watch.enabled&&usbMessage.occupied===true;
+    // One dark-red pulse per second, independent of camera frame rate.
+    const warningAlpha=reducedMotion.matches ? .42 : .3+.18*Math.cos(performance.now()*2*Math.PI/1000);
+    usbCtx.fillStyle=occupied?`rgba(139, 12, 28, ${warningAlpha})`:'#70e4dc10';
+    usbCtx.strokeStyle=occupied?'#ff626e':'#70e4dc';
+    usbCtx.lineWidth=2*scale;usbCtx.setLineDash([7*scale,5*scale]);
+    usbCtx.fillRect(x,y,w,h);usbCtx.strokeRect(x,y,w,h);usbCtx.setLineDash([]);
+  }
+  $('usb-count').textContent=`${objects.filter(o=>o.inside).length} objects in area`;
+}
+function openUsbVideo(){
+  if(!config?.usb)return;
+  usbSource?.stop();usbLastFrame=0;usbMessage=null;$('usb-empty').hidden=false;
+  usbSource=InsightSource.open({channel:config.usb.channel,video:usbVideo,syncBufferMs:180,retentionMs:1200,holdMs:0,onFrame:drawUsb,
+    onStatus:status=>{$('usb-video-status').textContent=status.width?`${status.width} × ${status.height} · ${status.text}`:status.text;if(selectedCamera==='usb')metric('metric-video',status.phase==='live'?number(status.fps):null,'fps');}});
+}
+async function updateWatch(fields){
+  try{renderState(await api('/api/watch',fields));}catch(e){reportError(e.message);}
+}
+$('select-mipi').onclick=()=>selectCamera('mipi');$('select-usb').onclick=()=>selectCamera('usb');
+$('watch-enabled').onchange=()=>updateWatch({enabled:$('watch-enabled').checked});
+$('watch-class').onchange=()=>updateWatch({object_class:$('watch-class').value});
+$('inspect-area').onclick=async()=>{try{renderState(await api('/api/watch/inspect',{}));}catch(e){reportError(e.message);}};
+$('draw-area').onclick=()=>{drawing=!drawing;draftZone=dragStart=null;usbOverlay.classList.toggle('drawing',drawing);$('draw-area').classList.toggle('active',drawing);$('area-hint').textContent=drawing?'Drag across the USB image to set the watch area.':'Drag a rectangle on the USB view to match your mat or table.';};
+function usbPoint(event){const r=usbOverlay.getBoundingClientRect();return [Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(event.clientY-r.top)/r.height))];}
+usbOverlay.onpointerdown=event=>{if(!drawing)return;dragStart=usbPoint(event);usbOverlay.setPointerCapture(event.pointerId);};
+usbOverlay.onpointermove=event=>{if(!dragStart)return;const p=usbPoint(event);draftZone=[Math.min(p[0],dragStart[0]),Math.min(p[1],dragStart[1]),Math.abs(p[0]-dragStart[0]),Math.abs(p[1]-dragStart[1])];};
+usbOverlay.onpointerup=async event=>{if(!dragStart)return;const zone=draftZone;dragStart=null;usbOverlay.releasePointerCapture(event.pointerId);if(zone&&zone[2]>=.05&&zone[3]>=.05){await updateWatch({zone});drawing=false;usbOverlay.classList.remove('drawing');$('draw-area').classList.remove('active');$('area-hint').textContent='Watch area updated. Draw again to adjust it.';}else{$('area-hint').textContent='Draw a larger area: at least 5% of the image in each direction.';}draftZone=null;};
+usbOverlay.onpointercancel=()=>{dragStart=draftZone=null;};
 async function start(){
   try{
     config=await api('/api/config');
+    $('camera-strip').hidden=!config.usb;$('secondary-camera').hidden=!config.usb;
     openVideo();
-    window.scout={get state(){return state;},get lastMessage(){return lastMessage;},get source(){return source;}};
+    openUsbVideo();
+    window.scout={get state(){return state;},get lastMessage(){return lastMessage;},get source(){return source;},get usbSource(){return usbSource;},get usbMessage(){return usbMessage;}};
     poll();
   }catch(error){reportError(error.message);setTimeout(start,2500);}
 }
 setInterval(()=>{
   if(lastFrame&&performance.now()-lastFrame>1500){ctx.clearRect(0,0,overlay.width,overlay.height);clearFocus();$('scene-state').textContent='WAITING FOR LIVE VIDEO';metric('metric-video',null,'fps');}
   if(lastStateAt&&performance.now()-lastStateAt>2500){$('connection').textContent='DISCONNECTED';$('connection').className='connection';}
+  if(usbLastFrame&&performance.now()-usbLastFrame>1500){usbCtx.clearRect(0,0,usbOverlay.width,usbOverlay.height);$('usb-scene-state').textContent='WAITING FOR LIVE VIDEO';$('usb-count').textContent='No current observation';}
 },500);
-window.addEventListener('beforeunload',()=>source?.stop());
+window.addEventListener('beforeunload',()=>{source?.stop();usbSource?.stop();});
 start();

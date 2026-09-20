@@ -63,24 +63,14 @@ def arguments(argv=None, configure=None):
     return args
 
 
-def make_graph(neat, args, *, include_frames=False):
-    camera = neat.CameraInputOptions()
-    if args.camera:
-        camera.camera_name = args.camera
-    camera.width, camera.height = args.width, args.height
-    camera.framerate_num, camera.framerate_den = args.fps, 1
-    camera.format = "NV12"
-    camera.buffer_name = "camera0"
-    camera.queue_depth = 2
-    camera.allow_cpu_fallback = args.allow_cpu_fallback
-
+def make_model(neat, args, *, input_format=None):
     options = neat.ModelOptions()
     options.preprocess.kind = neat.InputKind.Image
     options.preprocess.enable = neat.AutoFlag.On
     options.preprocess.input_max_width = args.width
     options.preprocess.input_max_height = args.height
     options.preprocess.input_max_depth = 3
-    options.preprocess.color_convert.input_format = neat.PreprocessColorFormat.NV12
+    options.preprocess.color_convert.input_format = input_format or neat.PreprocessColorFormat.NV12
     options.preprocess.color_convert.output_format = neat.PreprocessColorFormat.RGB
     options.preprocess.resize.enable = neat.AutoFlag.On
     options.preprocess.resize.width = 640
@@ -94,7 +84,20 @@ def make_graph(neat, args, *, include_frames=False):
     options.score_threshold = args.score
     options.nms_iou_threshold = args.nms_iou
     options.top_k = args.max_detections
-    model = neat.Model(str(args.model.resolve()), options)
+    return neat.Model(str(args.model.resolve()), options)
+
+
+def make_graph(neat, args, *, include_frames=False):
+    camera = neat.CameraInputOptions()
+    if args.camera:
+        camera.camera_name = args.camera
+    camera.width, camera.height = args.width, args.height
+    camera.framerate_num, camera.framerate_den = args.fps, 1
+    camera.format = "NV12"
+    camera.buffer_name = "camera0"
+    camera.queue_depth = 2
+    camera.allow_cpu_fallback = args.allow_cpu_fallback
+    model = make_model(neat, args)
 
     route = neat.ModelRouteOptions()
     route.upstream_name = camera.buffer_name

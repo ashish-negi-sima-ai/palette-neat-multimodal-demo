@@ -11,6 +11,7 @@ from unittest.mock import patch
 from scout import FrameCache
 from scout_state import MissionState, Tracker, parse_verdict
 from scout_vlm import validate_model
+from scout_watch import WatchState, UsbWatch
 
 
 def person(x=10, label='person'):
@@ -180,6 +181,78 @@ class VerificationTests(unittest.TestCase):
                 model_type='vlm-gemma4', vision_model_name='vision', language_model_name='language')))
             with self.assertRaisesRegex(ValueError, 'download incomplete'):
                 validate_model(root)
+
+
+class WatchTests(unittest.TestCase):
+    def setUp(self):
+        self.watch = WatchState(['person', 'cup'])
+        self.obj = dict(label='cup', bbox=[30, 30, 20, 20], confidence=.9)
+
+    def test_occupancy_requires_stable_observations_and_clearing_waits(self):
+        self.assertIsNone(self.watch.observe([self.obj], 1, 100, 100))
+        self.assertIsNone(self.watch.observe([], 1.2, 100, 100))
+        self.assertIsNone(self.watch.observe([self.obj], 1.3, 100, 100))
+        self.assertTrue(self.watch.observe([self.obj], 1.9, 100, 100)['occupied'])
+        self.assertIsNone(self.watch.observe([], 2, 100, 100))
+        self.assertIsNone(self.watch.observe([], 2.8, 100, 100))
+        self.assertFalse(self.watch.observe([], 3.1, 100, 100)['occupied'])
+
+    def test_roi_overlap_and_class_filter(self):
+        self.watch.configure(True, 'cup', [.5, .5, .5, .5])
+        self.watch.observe([self.obj, dict(self.obj, label='person', bbox=[60, 60, 20, 20])], 1, 100, 100)
+        self.assertFalse(any(o['inside'] for o in self.watch.objects))
+        self.watch.observe([dict(self.obj, bbox=[45, 45, 20, 20])], 2, 100, 100)
+        self.assertTrue(self.watch.objects[0]['inside'])
+
+    def test_pause_and_staleness_never_report_a_clear_area(self):
+        self.watch.observe([], 1, 100, 100)
+        self.watch.observe([], 2.1, 100, 100)
+        with patch('scout_watch.time.monotonic', return_value=5):
+            self.assertEqual(self.watch.snapshot()['status'], 'stale')
+            self.assertIsNone(self.watch.snapshot()['occupied'])
+        self.watch.unavailable('paused')
+        self.assertIsNone(self.watch.snapshot()['occupied'])
+        self.assertEqual(self.watch.snapshot()['objects'], [])
+
+    def test_usb_tracks_do_not_reuse_identity_after_pause(self):
+        self.watch.observe([self.obj], 1, 100, 100)
+        first = self.watch.objects[0]['id']
+        self.assertTrue(first.startswith('U'))
+        self.watch.unavailable('paused')
+        self.watch.observe([self.obj], 3, 100, 100)
+        self.assertNotEqual(first, self.watch.objects[0]['id'])
+
+    def test_invalid_area_does_not_change_configuration(self):
+        for zone in ([0, 0, float('nan'), .5], [0, 0, .01, 1], [.8, .8, .4, .4], [True, 0, .5, .5]):
+            with self.assertRaises(ValueError):
+                self.watch.configure(True, 'any', zone)
+        self.assertEqual(self.watch.generation, 0)
+        self.assertEqual(self.watch.zone, [.15, .15, .7, .7])
+
+    def test_changed_area_rejects_old_vlm_answer(self):
+        state = MissionState(['person', 'cup'])
+        state.watch = self.watch
+        worker = UsbWatch.__new__(UsbWatch)
+        worker.state = state
+        self.watch.configure(True, 'cup', [0, 0, .5, .5])
+        worker.apply_result(dict(generation=0), dict(verdict={'match': 'yes', 'reason': 'A cup.'}))
+        self.assertIsNone(self.watch.last_verdict)
+        self.assertEqual(state.stale_results, 1)
+        self.assertFalse(state.events)
+
+    def test_mipi_mission_preserves_usb_evidence_in_shared_timeline(self):
+        state = MissionState(['person', 'cup'])
+        event = state.event('zone', 'Area occupied', jpeg=b'usb-frame', camera_id='usb', camera_label='USB 02')
+        state.start('a blue shirt', 'person')
+        self.assertEqual({e['camera_id'] for e in state.events}, {'mipi', 'usb'})
+        self.assertEqual(state.evidence[event['id']], b'usb-frame')
+        state.reset()
+        self.assertEqual([e['camera_id'] for e in state.events], ['usb'])
+        self.assertEqual(state.evidence[event['id']], b'usb-frame')
+
+    def test_default_payload_watch_ignores_table_surface(self):
+        self.watch.observe([dict(self.obj, label='dining table')], 1, 100, 100)
+        self.assertFalse(self.watch.objects[0]['inside'])
 
 
 if __name__ == '__main__':

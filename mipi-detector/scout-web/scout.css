@@ -155,3 +155,31 @@ footer span:nth-child(2){display:none}
 .phase.reviewed{color:var(--green)!important}
 .event{max-height:145px}
 
+
+.camera-strip{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+.camera-strip button{text-align:left;border:1px solid var(--line);border-radius:9px;background:#101b25;padding:14px 18px;color:var(--text);display:grid;grid-template-columns:1fr auto;gap:6px}
+.camera-strip button>span{font-size:9px;letter-spacing:1.4px;color:var(--muted);grid-column:1/-1}
+.camera-strip strong{font-size:14px;font-weight:550}
+.camera-strip small{font-size:10px;color:var(--muted);align-self:center}
+.camera-strip .selected{border-color:#70e4dc88;background:#173039}
+.camera-strip .selected>span{color:var(--cyan)}
+#usb-overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#usb-overlay.drawing{pointer-events:auto;cursor:crosshair;touch-action:none}
+.watch-controls{padding:14px 18px 0}
+.watch-controls p{color:var(--muted);font-size:12px;line-height:1.7;margin:0 0 15px}
+.watch-controls>label{display:flex;align-items:center;margin:13px 0;font-size:12px}
+.watch-controls select{min-width:0;max-width:75%;flex:1}
+.watch-controls .primary{width:100%}
+.outline-button{border:1px solid #44616e;border-radius:6px;background:transparent;color:var(--cyan);padding:9px 12px;margin:2px 0 10px}
+.outline-button.active{background:#70e4dc22;border-color:var(--cyan)}
+#area-hint{font-size:10px;margin-bottom:15px}
+.watch-caption{display:flex;justify-content:space-between;padding:13px 17px;font-size:10px;color:var(--muted);gap:12px}
+#watch-status.occupied{color:#ff9ba3!important;background:#650f20}
+#watch-status.clear{color:var(--cyan)!important}
+#watch-status{font-size:8px;letter-spacing:.5px}
+#secondary-camera .panel-heading{padding:0 12px;font-size:9px}
+#secondary-camera .panel-heading em{display:none}
+#secondary-camera .mission-progress{display:none}
+.event.zone{border-color:#876b40}
+.event.zone strong{color:var(--amber)}
+@media(max-width:760px){#secondary-camera{grid-column:1/-1}.camera-strip button{padding:12px;grid-template-columns:1fr}.camera-strip small{grid-column:1}.camera-strip strong{font-size:12px}.camera-strip button>span{font-size:8px}}
