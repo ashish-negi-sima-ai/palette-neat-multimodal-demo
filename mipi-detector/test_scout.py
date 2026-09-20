@@ -3,14 +3,57 @@
 import json
 from pathlib import Path
 import tempfile
+import threading
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+from scout import FrameCache
 from scout_state import MissionState, Tracker, parse_verdict
 from scout_vlm import validate_model
 
 
 def person(x=10, label='person'):
     return dict(label=label, bbox=[x, 10, 60, 150], confidence=.9)
+
+
+class PreviewTimingTests(unittest.TestCase):
+    def test_restart_preserves_video_timeline_and_capture_matching(self):
+        sent = []
+        preview = SimpleNamespace(started_ns=1_000_000_000,
+                                  send=lambda frame, pts: sent.append(pts))
+        for started_ns, expected in ((2_000_000_000, [1_000_000_000, 1_033_333_333]),
+                                     (5_000_000_000, [4_000_000_000, 4_033_333_333])):
+            frames = [SimpleNamespace(pts_ns=100_000_000),
+                      SimpleNamespace(pts_ns=133_333_333)]
+            pending = iter(frames)
+            drained = threading.Event()
+            release = threading.Event()
+
+            def pull(_name, _timeout):
+                sample = next(pending, None)
+                if sample is None:
+                    drained.set()
+                    release.wait(.2)
+                return sample
+
+            with patch('scout.time.monotonic_ns', return_value=started_ns):
+                cache = FrameCache(SimpleNamespace(pull=pull), preview)
+                try:
+                    self.assertTrue(drained.wait(2))
+                    self.assertIsNone(cache.error)
+                    self.assertEqual(sent[-2:], expected)
+                    # Metadata uses this same offset, while evidence lookup keeps
+                    # the original camera PTS after a capture restart.
+                    for frame, pts in zip(frames, expected):
+                        self.assertEqual(frame.pts_ns + cache.pts_offset_ns, pts)
+                        self.assertIs(cache.find(frame.pts_ns), frame)
+                    self.assertEqual([f.pts_ns for f in frames], [100_000_000, 133_333_333])
+                finally:
+                    cache.stopping.set()
+                    release.set()
+                    cache.close()
+        self.assertEqual(sent, sorted(sent))
 
 
 class TrackingTests(unittest.TestCase):

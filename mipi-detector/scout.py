@@ -2,6 +2,7 @@
 """SCOUT: one MIPI camera, YOLO tracking, Gemma verification and a live mission console."""
 
 from collections import deque
+from copy import copy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -72,11 +73,52 @@ def evidence_image(frame, bbox, width, height):
     return jpeg.tobytes()
 
 
+class Preview:
+    """Keep the encoder alive while camera/YOLO runs stop for inspection."""
+
+    def __init__(self, neat, args):
+        self.neat = neat
+        self.started_ns = time.monotonic_ns()
+        self.runtime = None
+        video = neat.VideoSenderOptions.h264_rtp_udp_from_raw(args.width, args.height, args.fps)
+        video.host, video.channel = args.host, args.channel
+        video.video_port_base = args.video_port_base
+        video.encoder.bitrate_kbps = args.bitrate
+        self.graph = neat.Graph('scout_preview')
+        self.graph.connect(neat.nodes.input('video'), neat.groups.video_sender(video))
+        self.options = neat.RunOptions()
+        self.options.preset = neat.RunPreset.Realtime
+        self.options.queue_depth = 2
+        self.options.overflow_policy = neat.OverflowPolicy.KeepLatest
+        self.options.advanced.copy_input = False
+        self.options.startup_preflight = False
+
+    def send(self, frame, pts_ns):
+        tensor = frame.tensor if frame.tensor is not None else frame.tensors[0]
+        # A separate header shares the pixels without changing capture timestamps
+        # used to match detections and evidence in the camera run.
+        sample = self.neat.make_tensor_sample('video', tensor)
+        sample.caps_string = frame.caps_string
+        sample.pts_ns, sample.frame_id = pts_ns, frame.frame_id
+        sample.duration_ns = frame.duration_ns
+        if self.runtime is None:
+            self.runtime = self.graph.build([sample], self.options)
+        else:
+            self.runtime.push('video', [sample])
+
+    def close(self):
+        if self.runtime is not None:
+            self.runtime.close()
+            self.runtime = None
+
+
 class FrameCache:
     """Drain raw output independently; retain at most eight of the 32 camera buffers."""
 
-    def __init__(self, runtime):
+    def __init__(self, runtime, preview=None):
         self.runtime = runtime
+        self.preview = preview
+        self.pts_offset_ns = None
         self.frames = deque(maxlen=8)
         self.lock = threading.Lock()
         self.stopping = threading.Event()
@@ -89,6 +131,15 @@ class FrameCache:
             while not self.stopping.is_set():
                 sample = self.runtime.pull('frame', 200)
                 if sample is not None:
+                    if self.preview:
+                        if sample.pts_ns is None or sample.pts_ns < 0:
+                            raise RuntimeError('Missing camera timestamp for preview')
+                        if self.pts_offset_ns is None:
+                            # Camera PTS resets on restart; preserve one monotonic
+                            # video timeline, with the same offset for metadata.
+                            self.pts_offset_ns = (time.monotonic_ns() -
+                                self.preview.started_ns - sample.pts_ns)
+                        self.preview.send(sample, sample.pts_ns + self.pts_offset_ns)
                     with self.lock:
                         self.frames.append(sample)
         except Exception as exc:
@@ -244,7 +295,9 @@ def run(args):
     stopping = threading.Event()
     handlers = {s: signal.signal(s, lambda *_: stopping.set())
                 for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
-    runtime = cache = None
+    runtime = cache = graph = model = preview = None
+    capture_args = copy(args)
+    capture_args.no_stream = True
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
     try:
         console.start()
@@ -271,7 +324,9 @@ def run(args):
             vlm.close()
         if stopping.is_set():
             return
-        graph, model = detector.make_graph(neat, args, include_frames=True)
+        if not args.no_stream:
+            preview = Preview(neat, args)
+        graph, model = detector.make_graph(neat, capture_args, include_frames=True)
         options = neat.RunOptions()
         options.preset = neat.RunPreset.Realtime
         options.queue_depth = 2
@@ -281,7 +336,7 @@ def run(args):
         if args.print_backend:
             print(graph.describe_backend(False), flush=True)
         runtime = graph.build(options)
-        cache = FrameCache(runtime)
+        cache = FrameCache(runtime, preview)
         meta_options = neat.MetadataSenderOptions()
         meta_options.host, meta_options.channel = args.host, args.channel
         meta_options.metadata_port_base = args.metadata_port_base
@@ -298,7 +353,7 @@ def run(args):
                     cache.close()
                 if runtime:
                     runtime.close()
-                cache = runtime = None
+                cache = runtime = graph = model = None
                 vlm.close()
                 with state.lock:
                     state.busy = False
@@ -333,8 +388,11 @@ def run(args):
                     stopping.wait(.05)
                     continue
                 state.camera_status = 'resuming'
+                # Recreate camera/YOLO while the independent encoder stays alive.
+                # Restarting the encoder invalidates EV74 preprocessing on Neat 0.4.0.
+                graph, model = detector.make_graph(neat, capture_args, include_frames=True)
                 runtime = graph.build(options)
-                cache = FrameCache(runtime)
+                cache = FrameCache(runtime, preview)
                 frame_times.clear()
                 last_frame = time.monotonic()
                 continue
@@ -360,11 +418,12 @@ def run(args):
                 meta = dict(objects=tracks, mission_id=state.generation, phase=state.phase,
                             candidate=state.candidate,
                             zone=dict(enabled=state.zone_enabled, inside=state.zone_inside, bbox=state.zone))
-            if sender:
+            if sender and cache.pts_offset_ns is not None:
                 if sample.pts_ns is None or sample.pts_ns < 0:
                     raise RuntimeError('Missing camera timestamp')
                 sender.send_metadata('object-detection', json.dumps(meta),
-                                     sample.pts_ns // 1_000_000, str(sample.frame_id))
+                                     (sample.pts_ns + cache.pts_offset_ns) // 1_000_000,
+                                     str(sample.frame_id))
             with state.lock:
                 candidate = state.choose_candidate(now)
                 frame = cache.find(sample.pts_ns) if candidate else None
@@ -387,7 +446,7 @@ def run(args):
                 state.pause_capture()
                 cache.close()
                 runtime.close()
-                cache = runtime = None
+                cache = runtime = graph = model = None
                 vlm.submit(job)
             if now - last_report >= 2:
                 print(f'frames={state.frames} fps={state.fps:.1f} tracks={len(tracks)} '
@@ -402,6 +461,8 @@ def run(args):
             cache.close()
         if runtime is not None:
             runtime.close()
+        if preview is not None:
+            preview.close()
         console.close()
         for signum, handler in handlers.items():
             signal.signal(signum, handler)

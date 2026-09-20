@@ -12,6 +12,38 @@ is documented in this repository's `vision-local/src/mla_gate.h`. Gemma remains
 loaded; the camera/YOLO graph restarts after each inspection. This demo
 does not claim uninterrupted simultaneous MIPI capture and VLM inference.
 
+## Start on the SoM devkit
+
+The Waveshare SoM devkit at `10.42.0.147` uses camera `imx678 5-0042`
+with `modalix-som-waveshare-ECON-IMX678-1CAM.dtbo`. A direct 1080p NV12
+capture delivered 30 FPS. Start SCOUT with that camera and frame rate:
+
+```bash
+ssh sima@10.42.0.147
+cd /workspace/GitHub/palette-neat-multimodal-demo
+./mipi-detector/scout.sh --camera 'imx678 5-0042' --fps 30 \
+  --host 10.42.0.1 --allow-cpu-fallback
+```
+
+Open **<https://10.42.0.147:8022>**. The model directory defaults to
+`/workspace/llima/models/gemma-4-E4B-it-GPTQ-a16w4`. Allow initial model loading
+to finish before the camera starts. The DVT-specific `SCOUT_LIBRARY_PATH`
+override below is separate from this SoM launch command.
+
+The installed SoM camera stack requires `--allow-cpu-fallback`: strict capture
+failed with “Required zero-copy DMA-BUF pool is unavailable”. With the fallback,
+Neat copies camera buffers into its device-memory pipeline; YOLO preprocessing
+and inference still run on the accelerators. A 60-frame detector smoke test
+completed successfully with this option.
+
+The application retains snapshot inspection on the SoM: it pauses capture
+while Gemma checks a crop, then resumes. The H.264 encoder stays alive in a
+separate run: restarting it alongside YOLO on the installed Neat 0.4.0 runtime
+caused `infra.accelerator_execution_failed` in preprocessing. Camera and YOLO
+can restart while that encoder remains open. Video and detection metadata use
+the same timestamp offset to preserve alignment across camera restarts.
+Concurrent VLM/camera operation on the SoM has not been validated.
+
 ## Start on the validated DVT
 
 Stop the plain MIPI detector or the USB/voice demo before starting SCOUT; they
@@ -76,8 +108,9 @@ MIPI NV12 ──┬── H.264 → Neat Insight → browser video
                        saved evidence; resume live capture
 ```
 
-The raw-frame cache retains at most eight samples; only a requested evidence
-image is copied into Python. A separate spawned process owns Gemma, with one
+The raw-frame cache retains at most eight samples and forwards shared camera
+tensors to the persistent encoder; only a requested evidence image is copied
+into Python. A separate spawned process owns Gemma, with one
 outstanding request and a timeout. Malformed output cannot become a positive
 verdict. Resetting or changing a mission invalidates its in-flight answer.
 Evidence is bounded to the latest 24 events and lives in memory.
@@ -125,6 +158,13 @@ this board-specific package choice blindly.
 python3 -m unittest discover -s mipi-detector -p test_scout.py -v
 node --check mipi-detector/scout-web/scout.js
 ```
+
+Validated on the Waveshare SoM devkit with the launch command above: 1080p
+browser video and detection at about 30 FPS, two successive Gemma snapshot
+checks (2.52 and 1.45 seconds of VLM time), and resumed capture with exact RTP
+metadata matches and no arrival-time fallbacks. Both evidence dialogs opened
+the saved 480×480 crop; no JavaScript errors occurred. Fourteen local unit tests
+pass, including timestamp continuity and evidence matching across camera restarts.
 
 Validated on the DVT with e-con IMX678 at CSI-2 CONN_0: 1,500 live frames at
 25 FPS, browser video at 1920×1080/25 FPS, exact RTP metadata matching, and an
