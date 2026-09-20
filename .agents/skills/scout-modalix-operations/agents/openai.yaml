@@ -1,0 +1,3 @@
+interface:
+  display_name: "SCOUT on Modalix"
+  short_description: "Run and troubleshoot SCOUT on Modalix devkits"
