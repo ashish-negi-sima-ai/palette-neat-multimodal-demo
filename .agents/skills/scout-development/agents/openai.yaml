@@ -1,0 +1,3 @@
+interface:
+  display_name: "SCOUT Development"
+  short_description: "Develop SCOUT cameras, missions, evidence, and UI"

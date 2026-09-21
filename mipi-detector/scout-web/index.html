@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SCOUT · Onboard mission assistant</title>
+  <link rel="stylesheet" href="/scout.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 5v30M5 20h30M9 9l22 22M9 31L31 9"/><circle cx="20" cy="20" r="7"/><circle cx="9" cy="9" r="6"/><circle cx="31" cy="31" r="6"/><circle cx="31" cy="9" r="6"/><circle cx="9" cy="31" r="6"/></svg><div><strong>SCOUT<span> / 01</span></strong><small>ONBOARD MISSION ASSISTANT</small></div></div>
+    <div class="top-status"><span class="hardware">MODALIX</span><span class="connection" id="connection">Connecting</span></div>
+  </header>
+  <main>
+    <div class="intro"><div><span class="eyebrow">SEE. INSPECT. UNDERSTAND.</span><h1>Give your cameras a mission.</h1></div><p>Live perception. Visual reasoning.<br>One onboard computer.</p></div>
+    <div id="error" class="error" role="alert" hidden></div>
+    <nav class="camera-strip" id="camera-strip" aria-label="Mission views" hidden>
+      <button id="select-mipi" class="selected" aria-pressed="true"><span>01 / MIPI OVERVIEW</span><strong>Find a subject</strong><small id="mipi-strip-status">Connecting</small></button>
+      <button id="select-usb" aria-pressed="false"><span>02 / USB LANDING &amp; PAYLOAD</span><strong>Watch an area</strong><small id="usb-strip-status">Connecting</small></button>
+    </nav>
+    <section class="workspace">
+      <div class="scene-column">
+        <div id="primary-camera"><div class="panel scene-panel" id="mipi-panel">
+          <div class="panel-heading"><span><i class="live-dot"></i>MIPI 01 <em>OVERVIEW</em></span><span id="video-status">Waiting for camera</span></div>
+          <div class="viewport">
+            <video id="video" autoplay muted playsinline></video><canvas id="overlay" aria-label="Tracked subjects and watch zone"></canvas>
+            <div id="video-empty" class="video-empty"><div class="reticle"></div><strong>Connecting to your camera</strong><span>Waiting for the live MIPI stream</span></div>
+            <div class="view-corners" aria-hidden="true"></div>
+            <div class="capture-pause" id="capture-pause" hidden>SNAPSHOT CHECK · Live capture paused</div>
+            <div class="scene-caption"><span id="scene-state">LIVE OBSERVATION</span><span id="scene-count">0 subjects</span></div>
+          </div>
+          <div class="mission-progress"><span id="step-search">01 <b>Find</b></span><i></i><span id="step-verify">02 <b>Inspect</b></span><i></i><span id="step-follow">03 <b>Review</b></span></div>
+        </div></div>
+        <div class="metrics">
+          <div><span>VIDEO</span><strong id="metric-video">—<small> fps</small></strong></div>
+          <div><span>DETECTION</span><strong id="metric-detection">—<small> fps</small></strong></div>
+          <div><span>LAST VLM CHECK</span><strong id="metric-vlm">—<small> s</small></strong></div>
+          <div><span>OBSERVATION AGE</span><strong id="metric-age">—<small> ms</small></strong></div>
+        </div>
+      </div>
+      <aside class="control-column">
+        <section class="panel mission-panel" id="find-panel">
+          <div class="panel-heading"><span>YOUR MISSION</span><span id="phase" class="phase">STANDBY</span></div>
+          <form id="mission-form">
+            <label for="object-class">Look for a <select id="object-class"><option value="person">person</option><option value="backpack">backpack</option><option value="bottle">bottle</option><option value="cup">cup</option><option value="handbag">handbag</option><option value="chair">chair</option></select></label>
+            <label for="query" class="query-label">Describe its appearance</label>
+            <textarea id="query" minlength="3" maxlength="180" required placeholder="e.g. a person wearing an orange vest">a person wearing a dark shirt</textarea>
+            <div class="presets"><button type="button" data-class="person" data-query="a person wearing a dark shirt">Dark shirt</button><button type="button" data-class="person" data-query="a person wearing an orange vest">Orange vest</button><button type="button" data-class="backpack" data-query="a blue backpack">Blue backpack</button></div>
+            <label class="zone-option"><input type="checkbox" id="zone"> Watch this object class in the marked zone</label>
+            <div class="actions"><button class="primary" type="submit" id="start">Inspect subject <span>↗</span></button><button class="reset" type="button" id="reset" title="Stop this mission">Reset</button></div>
+          </form>
+          <div class="mission-message" id="mission-message">Describe a visible subject. Each check briefly pauses capture, then returns to live detection.</div>
+          <div class="model-line"><span><i id="vlm-dot"></i>Gemma 4 E4B</span><span id="vlm-status">Loading</span><button id="retry" type="button" hidden>Retry</button></div>
+        </section>
+        <section class="panel mission-panel" id="watch-panel" hidden>
+          <div class="panel-heading"><span>LANDING / PAYLOAD WATCH</span><span id="watch-status" class="phase">OBSERVING</span></div>
+          <div class="watch-controls">
+            <p>Mark a mat, table or payload area. Watch objects enter and leave, then inspect a saved view with Gemma.</p>
+            <label class="zone-option"><input type="checkbox" id="watch-enabled" checked> Monitor the marked area</label>
+            <label for="watch-class">Watch for <select id="watch-class"><option value="any">people &amp; payload props</option><option value="person">person</option><option value="backpack">backpack</option><option value="handbag">handbag</option><option value="bottle">bottle</option><option value="cup">cup</option><option value="chair">chair</option></select></label>
+            <button id="draw-area" class="outline-button" type="button">Draw watch area</button>
+            <p id="area-hint">Drag a rectangle on the USB view to match your mat or table.</p>
+            <button class="primary" id="inspect-area" type="button">Inspect area snapshot <span>↗</span></button>
+          </div>
+          <div id="watch-message" class="mission-message">Waiting for the USB camera.</div>
+          <div class="model-line"><span>Gemma 4 E4B</span><span id="watch-vlm-status">Loading</span></div>
+        </section>
+        <section class="panel focus-panel">
+          <div class="panel-heading"><span>SUBJECT FOCUS</span><span id="focus-id">NO SUBJECT</span></div>
+          <div class="focus-viewport"><canvas id="focus" width="640" height="360"></canvas><div id="focus-empty"><span class="reticle" aria-hidden="true"></span><span>Your subject will appear here</span></div></div>
+          <div class="focus-caption"><span id="focus-label">Digital inspection view</span><span id="focus-checks">Awaiting mission</span></div>
+        </section>
+        <div id="secondary-camera" hidden>
+          <section class="panel scene-panel" id="usb-panel">
+            <div class="panel-heading"><span><i class="live-dot"></i>USB 02 <em>LANDING / PAYLOAD</em></span><span id="usb-video-status">Waiting for camera</span></div>
+            <div class="viewport">
+              <video id="usb-video" autoplay muted playsinline></video><canvas id="usb-overlay" aria-label="USB objects and adjustable watch area"></canvas>
+              <div class="video-empty" id="usb-empty"><div class="reticle"></div><strong>Landing / payload view</strong><span>Waiting for the USB stream</span></div>
+              <div class="capture-pause" id="usb-pause" hidden>SNAPSHOT CHECK · Live capture paused</div>
+              <div class="scene-caption"><span id="usb-scene-state">OBSERVING AREA</span><span id="usb-count">0 objects in area</span></div>
+            </div>
+            <div class="watch-caption"><span id="usb-rate">— fps</span><span>Object observations · local USB tracks</span></div>
+          </section>
+        </div>
+      </aside>
+    </section>
+    <section class="evidence-section">
+      <div class="evidence-heading"><div><span class="eyebrow">EVERY OBSERVATION HAS A SOURCE</span><h2>Mission evidence</h2></div><span id="evidence-count">0 observations</span></div>
+      <div id="timeline" class="timeline"><div class="timeline-empty"><span>01 → 02 → 03</span><div><strong>The story of your mission, as it happens.</strong><p>Saved images, visible evidence, and camera timestamps appear here.</p></div></div></div>
+    </section>
+    <footer><span>SiMa.ai <b>×</b> Palette Neat</span><span>Cameras → YOLO26 → Gemma 4 → Mission awareness</span><span>All inference on Modalix</span></footer>
+  </main>
+  <dialog id="evidence-dialog"><button id="close-dialog" aria-label="Close evidence">×</button><img id="evidence-image" alt="Saved camera evidence"><div><span class="eyebrow">OBSERVATION SOURCE</span><h2 id="evidence-title"></h2><p id="evidence-detail"></p><small id="evidence-time"></small></div></dialog>
+  <script src="/webrtc.js"></script><script src="/scout.js"></script>
+</body>
+</html>
