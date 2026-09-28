@@ -122,11 +122,13 @@ class VLMWorker:
         self.path, self.timeout = str(model_path), timeout_s
         self.process = None
         self.requests = self.responses = None
+        self.stopping = self.cancelling = None
         self.active = None
         self.sequence = 0
 
     def start(self):
-        self.close()
+        if self.process:
+            raise RuntimeError('Gemma is already started; restart the whole model group')
         self.requests = self.context.Queue(maxsize=1)
         self.responses = self.context.Queue(maxsize=4)
         self.stopping, self.cancelling = self.context.Event(), self.context.Event()
@@ -164,19 +166,19 @@ class VLMWorker:
             messages.append({'kind': 'fatal', 'error':
                 f'Gemma worker exited (code {self.process.exitcode}). Check the model download and compatible Neat/LLiMa packages.'})
         if self.active and time.monotonic() - self.active['captured_at'] > self.timeout + 10:
-            self.process.terminate()
-            self.process.join(2)
-            messages.append({'kind': 'fatal', 'error': 'Gemma exceeded the verification deadline; retry the VLM.'})
+            messages.append({'kind': 'fatal', 'error': 'Gemma exceeded the verification deadline; stop all models.'})
         elif not self.ready and time.monotonic() - self.started > 180:
-            self.process.terminate()
-            self.process.join(2)
             messages.append({'kind': 'fatal', 'error': 'Gemma model loading exceeded 180 seconds.'})
         return messages
 
-    def close(self):
+    def request_stop(self):
         if self.process:
             self.stopping.set()
             self.cancelling.set()
+
+    def close(self):
+        self.request_stop()
+        if self.process:
             self.process.join(3)
             if self.process.is_alive():
                 self.process.terminate()
@@ -191,4 +193,5 @@ class VLMWorker:
                 channel.cancel_join_thread()
                 channel.close()
         self.requests = self.responses = None
+        self.stopping = self.cancelling = None
         self.active = None

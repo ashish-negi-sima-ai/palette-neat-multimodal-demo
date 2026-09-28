@@ -183,3 +183,5 @@ footer span:nth-child(2){display:none}
 .event.zone{border-color:#876b40}
 .event.zone strong{color:var(--amber)}
 @media(max-width:760px){#secondary-camera{grid-column:1/-1}.camera-strip button{padding:12px;grid-template-columns:1fr}.camera-strip small{grid-column:1}.camera-strip strong{font-size:12px}.camera-strip button>span{font-size:8px}}
+
+.speech-controls{padding:0 20px 16px}.speech-controls p{font-size:12px;line-height:1.6;color:var(--muted,#91a8b5)}.speech-actions{display:flex;flex-wrap:wrap;gap:8px}.speech-actions button{padding:10px 14px}.speech-actions [aria-pressed="true"]{background:#963b49;color:#fff}.speech-controls #speech-status{color:#cce4e9;overflow-wrap:anywhere;min-height:2em}

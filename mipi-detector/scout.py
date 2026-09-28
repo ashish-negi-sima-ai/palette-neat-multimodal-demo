@@ -4,7 +4,9 @@
 from collections import deque
 from copy import copy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import argparse
 import json
+import gc
 from pathlib import Path
 import signal
 import socket
@@ -21,17 +23,25 @@ import main as detector
 from scout_state import MissionState
 from scout_vlm import VLMWorker, validate_model
 from scout_watch import WatchState, UsbWatch
+from scout_config import load_config, configure_defaults
+from scout_speech import Speech, client_id
+from scout_lifecycle import RestartModels, shutdown_all
 
 HERE = Path(__file__).resolve().parent
 
 
 def configure(parser):
     parser.description = __doc__
+    parser.add_argument('--config', type=Path, help='SCOUT YAML configuration; CLI options override it')
+    parser.add_argument('--no-stt', action='store_true', help='Disable Whisper, including model loading')
+    parser.add_argument('--no-tts', action='store_true', help='Disable spoken replies')
     parser.add_argument('--vlm-model', type=Path,
-                        default=Path('/workspace/llima/models/gemma-4-E4B-it-GPTQ-a16w4'))
+                        default=Path('/media/nvme/llima/models/Gemma-4-E4B-it-GPTQ-a16w4-8k-deploy'))
     parser.add_argument('--vlm-timeout', type=float, default=15)
-    parser.add_argument('--auto-checks', action='store_true',
-                        help='Repeat snapshot checks, with at least 15 seconds of live capture between checks')
+    parser.add_argument('--auto-checks', action=argparse.BooleanOptionalAction, default=True,
+                        help='Automatically repeat subject checks (default: enabled)')
+    parser.add_argument('--inspection-interval', type=float, default=3.0,
+                        help='Minimum seconds between subject snapshot starts (default: 3)')
     parser.add_argument('--bind', default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8022)
     parser.add_argument('--insight-vf-port', type=int, default=8081)
@@ -86,7 +96,7 @@ def jpeg_image(crop):
 
 
 class Preview:
-    """Keep the encoder alive while camera/YOLO runs stop for inspection."""
+    """Persistent encoder for the application lifetime."""
 
     def __init__(self, neat, args):
         self.neat = neat
@@ -169,9 +179,12 @@ class FrameCache:
 
 
 class Console:
-    def __init__(self, args, state, vlm):
+    def __init__(self, args, state, vlm, speech=None):
         self.args, self.state, self.vlm = args, state, vlm
+        self.speech = speech
+        self.owners = {'mipi': None, 'usb': None}
         self.retry_vlm = threading.Event()
+        self.closing = False
         self.server = None
         self.thread = None
 
@@ -203,16 +216,28 @@ class Console:
                 assets = {'/': (HERE / 'scout-web/index.html', 'text/html; charset=utf-8'),
                           '/scout.css': (HERE / 'scout-web/scout.css', 'text/css'),
                           '/scout.js': (HERE / 'scout-web/scout.js', 'text/javascript'),
+                          '/voice.js': (HERE / 'scout-web/voice.js', 'text/javascript'),
+                          '/audio-recorder.js': (HERE / 'scout-web/audio-recorder.js', 'text/javascript'),
                           '/webrtc.js': (detector.ROOT / 'web/webrtc.js', 'text/javascript')}
                 if path in assets:
                     filename, mime = assets[path]
                     self.send(200, filename.read_bytes(), mime)
                 elif path == '/api/state':
-                    self.send(200, console.state.snapshot())
+                    snapshot = console.state.snapshot()
+                    snapshot['speech'] = console.speech.snapshot()
+                    self.send(200, snapshot)
+                elif path == '/api/speech/state':
+                    owner = parse_qs(urlsplit(self.path).query).get('client_id', [''])[0]
+                    self.send(200, console.speech.snapshot(owner))
+                elif path.startswith('/api/speech/audio/'):
+                    parts = path.split('/')
+                    payload = console.speech.audio(parts[4], parts[5]) if len(parts) == 6 else None
+                    self.send(200, payload, 'audio/wav') if payload else self.send(404, {'error': 'Audio expired'})
                 elif path == '/api/config':
                     self.send(200, dict(channel=console.args.channel, width=console.args.width,
                         height=console.args.height, requested_fps=console.args.fps,
                         classes=console.state.labels, model='Gemma 4 E4B', source='MIPI 01',
+                        speech=console.speech.public_config(),
                         usb=dict(channel=console.args.channel+1, width=console.args.usb_width,
                                  height=console.args.usb_height, source='USB 02') if console.args.usb_camera else None))
                 elif path.startswith('/api/evidence/') and path.endswith('.jpg'):
@@ -225,11 +250,24 @@ class Console:
 
             def do_POST(self):
                 try:
+                    if console.closing:
+                        self.send(503, {'error': 'All models are stopping. Reconnect after restart.'})
+                        return
                     origin = self.headers.get('Origin')
                     if origin and urlsplit(origin).netloc != self.headers.get('Host'):
                         self.send(403, {'error': 'Use the mission console on this server.'})
                         return
                     size = int(self.headers.get('Content-Length', '0'))
+                    path = urlsplit(self.path).path
+                    if path.startswith('/api/speech/recordings/'):
+                        if not 0 < size <= console.speech.settings['stt']['upload_max_bytes']:
+                            raise ValueError('Invalid recording size')
+                        if self.headers.get_content_type() != 'audio/wav':
+                            raise ValueError('Expected audio/wav')
+                        self.connection.settimeout(15)
+                        console.speech.upload(path.rsplit('/', 1)[-1], self.rfile.read(size))
+                        self.send(202, {'status': 'queued'})
+                        return
                     if not 0 < size <= 262144:
                         raise ValueError('Invalid request size')
                     body = json.loads(self.rfile.read(size))
@@ -254,16 +292,21 @@ class Console:
                         except (URLError, TimeoutError) as exc:
                             self.send(502, {'error': f'Insight connection failed: {exc}'})
                     elif path == '/api/mission':
-                        if set(body) - {'query', 'object_class', 'zone'}:
+                        if set(body) - {'query', 'object_class', 'zone', 'client_id'}:
                             raise ValueError('Unknown mission fields')
+                        owner = client_id(body['client_id']) if 'client_id' in body else None
                         with console.state.lock:
                             console.state.start(body.get('query'), body.get('object_class'), body.get('zone', False))
+                            console.speech.cancel(camera='mipi')
+                            console.owners['mipi'] = owner
                             if not console.vlm.active or console.vlm.active.get('camera_id') != 'usb':
                                 console.vlm.cancel()
                         self.send(200, console.state.snapshot())
                     elif path == '/api/reset':
                         with console.state.lock:
                             console.state.reset()
+                            console.speech.cancel(camera='mipi')
+                            console.owners['mipi'] = None
                             if not console.vlm.active or console.vlm.active.get('camera_id') != 'usb':
                                 console.vlm.cancel()
                         self.send(200, console.state.snapshot())
@@ -277,6 +320,8 @@ class Console:
                             watch.configure(body.get('enabled', watch.enabled),
                                             body.get('object_class', watch.object_class),
                                             body.get('zone', watch.zone))
+                            console.speech.cancel(camera='usb')
+                            console.owners['usb'] = None
                             console.state.event('mission', 'Watch area updated',
                                 ('Watching ' + ('people and payload props' if watch.object_class == 'any' else watch.object_class))
                                 if watch.enabled else 'Area monitoring stopped.',
@@ -285,6 +330,7 @@ class Console:
                                 console.vlm.cancel()
                         self.send(200, console.state.snapshot())
                     elif path == '/api/watch/inspect':
+                        owner = client_id(body['client_id']) if 'client_id' in body else None
                         with console.state.lock:
                             watch = console.state.watch
                             if watch is None or watch.snapshot()['status'] != 'live':
@@ -292,13 +338,37 @@ class Console:
                             if console.state.vlm_status != 'ready' or console.state.busy:
                                 raise ValueError('Wait for Gemma to be ready')
                             watch.inspection_requested = True
+                            console.owners['usb'] = owner
                         self.send(202, console.state.snapshot())
+                    elif path == '/api/speech/begin':
+                        with console.state.lock:
+                            if body.get('object_class') not in console.state.labels or type(body.get('zone')) is not bool:
+                                raise ValueError('Choose a supported object class and zone setting')
+                            token = console.speech.begin(body.get('client_id'), console.state.generation + 1,
+                                                         body['object_class'], body['zone'])
+                            console.state.generation += 1
+                            console.state.focus = None
+                            console.state.checked_at.clear()
+                            console.state.track_verdicts.clear()
+                            console.state.inspection_requested = False
+                            console.owners['mipi'] = None
+                            if not console.vlm.active or console.vlm.active.get('camera_id') != 'usb':
+                                console.vlm.cancel()
+                        self.send(201, {'id': token, 'mission_id': console.state.generation})
+                    elif path == '/api/speech/cancel':
+                        owner = client_id(body.get('client_id'))
+                        with console.state.lock:
+                            console.speech.cancel(owner=owner)
+                            for camera, current in console.owners.items():
+                                if current == owner:
+                                    console.owners[camera] = None
+                        self.send(200, {'status': 'cancelled'})
                     elif path == '/api/vlm/retry':
                         console.retry_vlm.set()
-                        self.send(202, {'status': 'Retry requested'})
+                        self.send(202, {'status': 'All models will stop and restart together'})
                     else:
                         self.send(404, {'error': 'Not found'})
-                except (ValueError, TypeError) as exc:
+                except (ValueError, TypeError, TimeoutError) as exc:
                     self.send(400, {'error': str(exc)})
 
         cert, key = self.args.cert, self.args.key
@@ -317,7 +387,11 @@ class Console:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
+    def request_stop(self):
+        self.closing = True
+
     def close(self):
+        self.request_stop()
         if self.server:
             self.server.shutdown()
             self.server.server_close()
@@ -334,11 +408,12 @@ def run(args):
     labels = [s.strip() for s in args.labels.read_text().splitlines() if s.strip()]
     if len(labels) != 80:
         raise ValueError('The supplied YOLO26 model needs 80 COCO labels')
-    state = MissionState(labels, auto_checks=args.auto_checks)
+    state = MissionState(labels, auto_checks=args.auto_checks, inspection_interval=args.inspection_interval)
     if args.usb_camera:
         state.watch = WatchState(labels)
     vlm = VLMWorker(args.vlm_model, args.vlm_timeout)
-    console = Console(args, state, vlm)
+    speech = Speech(args.speech_config)
+    console = Console(args, state, vlm, speech)
     stopping = threading.Event()
     handlers = {s: signal.signal(s, lambda *_: stopping.set())
                 for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
@@ -347,40 +422,28 @@ def run(args):
     capture_args.no_stream = True
     args.runtime_dir.mkdir(parents=True, exist_ok=True)
 
-    def pause_capture():
-        nonlocal cache, runtime, graph, model
-        state.pause_capture()
-        if usb:
-            usb.pause()
-        if cache:
-            cache.close()
-        if runtime:
-            runtime.close()
-        cache = runtime = graph = model = None
-
     try:
         console.start()
         print(f'SCOUT console: https://{socket.gethostname()}:{args.port}', flush=True)
-        # Load Gemma before starting capture; loading a large model while video
-        # is live can interrupt the camera/MLA pipeline on this runtime.
-        try:
-            validate_model(args.vlm_model)
-            vlm.start()
-            deadline = time.monotonic() + 180
-            while not stopping.is_set() and state.vlm_status == 'loading':
+        # Initialize the complete resident group before starting the camera runs.
+        # No member is unloaded or restarted independently during the session.
+        validate_model(args.vlm_model)
+        vlm.start()
+        while not stopping.is_set() and state.vlm_status == 'loading':
+            for message in vlm.poll():
+                if message['kind'] == 'ready':
+                    state.vlm_status = 'ready'
+                    print('Gemma ready: ' + message['model'], flush=True)
+                elif message['kind'] == 'fatal':
+                    raise RuntimeError(message['error'])
+            stopping.wait(.1)
+        if not stopping.is_set():
+            speech.start_models()
+            while not stopping.is_set() and not speech.poll_models():
                 for message in vlm.poll():
-                    if message['kind'] == 'ready':
-                        state.vlm_status = 'ready'
-                        print('Gemma ready: ' + message['model'], flush=True)
-                    elif message['kind'] == 'fatal':
-                        state.vlm_status, state.vlm_error = 'error', message['error']
-                        vlm.close()
-                if time.monotonic() >= deadline:
-                    raise RuntimeError('Gemma model loading exceeded 180 seconds')
+                    if message['kind'] == 'fatal':
+                        raise RuntimeError(message['error'])
                 stopping.wait(.1)
-        except Exception as exc:
-            state.vlm_status, state.vlm_error = 'error', str(exc)
-            vlm.close()
         if stopping.is_set():
             return
         if not args.no_stream:
@@ -408,67 +471,53 @@ def run(args):
         frame_times = deque(maxlen=100)
         while not stopping.is_set() and (not args.frames or state.frames < args.frames):
             if console.retry_vlm.is_set():
-                console.retry_vlm.clear()
-                pause_capture()
-                vlm.close()
-                with state.lock:
-                    state.busy = False
-                    state.candidate = None
-                    state.vlm_error = None
-                    state.vlm_status = 'loading'
-                    if state.watch:
-                        state.watch.checking = state.watch.inspection_requested = False
-                try:
-                    validate_model(args.vlm_model)
-                    vlm.start()
-                except Exception as exc:
-                    state.vlm_status, state.vlm_error = 'error', str(exc)
+                raise RestartModels('User requested a complete model-group restart')
+            speech.poll_models()
+            if cache.error:
+                raise RuntimeError('Camera frame output failed: ' + cache.error)
+            if usb and (usb.error or not usb.thread.is_alive()):
+                raise RuntimeError('USB model worker stopped: ' + (usb.error or 'unexpected exit'))
             for message in vlm.poll():
                 if message['kind'] == 'ready':
                     state.vlm_status = 'ready'
                     print('Gemma ready: ' + message['model'], flush=True)
                 elif message['kind'] == 'fatal':
-                    with state.lock:
-                        state.vlm_status, state.vlm_error = 'error', message['error']
-                        state.busy = False
-                        state.candidate = None
-                        if state.watch:
-                            state.watch.checking = False
-                        if state.query:
-                            state.phase = 'searching'
-                    print('VLM error: ' + message['error'], flush=True)
-                    vlm.close()
+                    raise RuntimeError(message['error'])
                 elif message['kind'] == 'result' and vlm.active:
                     job = vlm.active
                     vlm.active = None
-                    if job.get('camera_id') == 'usb':
-                        usb.apply_result(job, message)
-                    else:
-                        state.apply_snapshot_result(job, message, time.monotonic())
+                    with state.lock:
+                        before = state.event_counter
+                        camera = job.get('camera_id', 'mipi')
+                        if camera == 'usb':
+                            usb.apply_result(job, message)
+                        else:
+                            state.apply_snapshot_result(job, message, time.monotonic())
+                        if (state.event_counter != before and not message.get('error')
+                                and state.events[0].get('announce', True)):
+                            speech.speak(console.owners[camera], state.events[0], job['generation'])
                     print('VERIFICATION ' + json.dumps({k: v for k, v in message.items()}), flush=True)
-            if runtime is None:
-                if state.busy or state.vlm_status == 'loading':
-                    stopping.wait(.05)
-                    continue
-                state.camera_status = 'resuming'
-                # Recreate camera/YOLO while the independent encoder stays alive.
-                # Restarting the encoder invalidates EV74 preprocessing on Neat 0.4.0.
-                graph, model = detector.make_graph(neat, capture_args, include_frames=True)
-                runtime = graph.build(options)
-                cache = FrameCache(runtime, preview)
-                if usb:
-                    usb.resume()
-                frame_times.clear()
-                last_frame = time.monotonic()
-                continue
+            completed = speech.poll()
+            if completed and completed['kind'] == 'stt' and not completed.get('cancelled') and not completed.get('error'):
+                with state.lock, speech.lock:
+                    if not completed.get('cancelled') and completed['generation'] == state.generation:
+                        try:
+                            state.start(completed.get('transcript'), completed['object_class'], completed['zone'])
+                            completed['mission_id'] = state.generation
+                            console.owners['mipi'] = completed['client_id']
+                        except (ValueError, TypeError) as exc:
+                            completed['error'] = str(exc)
+                            speech.phase = 'error'
+                    else:
+                        speech.cancel()
+            if speech.phase == 'queued':
+                speech.start_pending()
             if usb and not state.busy and state.vlm_status == 'ready':
                 job = usb.inspection_job()
                 if job:
                     state.busy = True
                     state.vlm_requests += 1
-                    pause_capture()
                     vlm.submit(job)
-                    continue
             sample = runtime.pull('detections', 250)
             now = time.monotonic()
             if sample is None:
@@ -490,6 +539,7 @@ def run(args):
             with state.lock:
                 meta = dict(objects=tracks, mission_id=state.generation, phase=state.phase,
                             candidate=state.candidate,
+                            focus=dict(state.focus) if state.focus else None,
                             zone=dict(enabled=state.zone_enabled, inside=state.zone_inside, bbox=state.zone))
             if sender and cache.pts_offset_ns is not None:
                 if sample.pts_ns is None or sample.pts_ns < 0:
@@ -498,64 +548,82 @@ def run(args):
                                      (sample.pts_ns + cache.pts_offset_ns) // 1_000_000,
                                      str(sample.frame_id))
             with state.lock:
-                candidate = state.choose_candidate(now)
+                voice_mission_pending = (speech.job and speech.job['kind'] == 'stt' and speech.busy)
+                candidate = None if voice_mission_pending else state.choose_candidate(now)
                 frame = cache.find(sample.pts_ns) if candidate else None
                 if candidate and frame is not None:
                     jpeg = evidence_image(frame, candidate.bbox, args.width, args.height)
                     job = dict(generation=state.generation, query=state.query, object_class=state.object_class,
                                track_id=candidate.id, bbox=list(candidate.bbox), pts_ms=sample.pts_ns // 1_000_000,
                                captured_at=now, captured_time=time.time(), jpeg=jpeg)
-                    state.candidate = candidate.id
-                    state.busy = True
-                    state.inspection_requested = False
-                    state.vlm_requests += 1
-                    state.phase = 'verifying'
+                    state.begin_inspection(candidate.id, now)
             # Never retain a camera sample while waiting for Gemma.
             sample = frame = None
             if job is not None:
-                # This board's LLiMa inference overflows the active MIPI receiver.
-                # Stop capture AND drain YOLO before handing the MLA to Gemma.
-                # A result describes only the saved snapshot, not a future track.
-                pause_capture()
+                # Evidence is a copied JPEG. Capture, YOLO and encoders stay live.
                 vlm.submit(job)
             if now - last_report >= 2:
                 print(f'frames={state.frames} fps={state.fps:.1f} tracks={len(tracks)} '
                       f'mission={state.phase} vlm={state.vlm_status} busy={state.busy}', flush=True)
                 last_report = now
+    except RestartModels:
+        state.camera_status = 'restarting'
+        raise
     except Exception as exc:
         state.camera_status, state.camera_error = 'error', str(exc)
         raise
     finally:
-        vlm.close()
+        print('SCOUT: stopping the complete model group', flush=True)
+        # Signal all owners first. Even a failed close must not skip another model.
+        resources = [('console', console.request_stop, console.close),
+                     ('Gemma', vlm.request_stop, vlm.close),
+                     ('speech', speech.request_stop, speech.close)]
         if usb is not None:
-            usb.pause()
+            resources.append(('USB', usb.request_stop, usb.close))
         if cache is not None:
-            cache.close()
+            resources.append(('MIPI frames', cache.stopping.set, cache.close))
         if runtime is not None:
-            runtime.close()
-        if usb is not None:
-            usb.close()
+            resources.append(('MIPI camera/YOLO', None, runtime.close))
         if preview is not None:
-            preview.close()
-        console.close()
+            resources.append(('MIPI preview', None, preview.close))
+        cleanup_errors = shutdown_all(resources)
+        # Release graph/model/sample references and their device allocations too.
+        resources.clear()
+        sample = frame = sender = runtime = cache = graph = model = preview = usb = None
+        gc.collect()
+        for error in cleanup_errors:
+            print('SCOUT cleanup error: ' + error, file=sys.stderr, flush=True)
         for signum, handler in handlers.items():
             signal.signal(signum, handler)
-        if state.camera_status != 'error':
+        if state.camera_status not in ('error', 'restarting'):
             state.camera_status = 'stopped'
+        state.busy = False
+        state.vlm_status = 'stopped'
         summary = state.snapshot()
+        summary['speech'] = speech.snapshot()
+        summary['cleanup_errors'] = cleanup_errors
         (args.runtime_dir / 'last-run.json').write_text(json.dumps(summary, indent=2) + '\n')
         if args.summary:
             args.summary.parent.mkdir(parents=True, exist_ok=True)
             args.summary.write_text(json.dumps(summary, indent=2) + '\n')
         print('SCOUT SUMMARY ' + json.dumps(summary), flush=True)
+        if cleanup_errors:
+            raise RuntimeError('Model-group cleanup failed; automatic restart cancelled: ' + '; '.join(cleanup_errors))
 
 
 def main(argv=None):
-    args = detector.arguments(argv, configure=configure)
+    defaults, speech_config = load_config(argv)
+    def configured(parser):
+        configure(parser)
+        configure_defaults(parser, defaults)
+    args = detector.arguments(argv, configure=configured)
+    args.speech_config = speech_config
     if not 1 <= args.port <= 65535 or not 1 <= args.insight_vf_port <= 65535:
         raise ValueError('Ports must be between 1 and 65535')
     if not 1 <= args.vlm_timeout <= 60:
         raise ValueError('Use a VLM timeout of 1–60 seconds')
+    if not 1 <= args.inspection_interval <= 300:
+        raise ValueError('Use an inspection interval of 1–300 seconds')
     if args.usb_camera:
         if args.usb_width < 160 or args.usb_height < 120 or args.usb_width % 2 or args.usb_height % 2:
             raise ValueError('USB dimensions must be even and at least 160×120')
@@ -567,7 +635,13 @@ def main(argv=None):
         raise ValueError('Supply both --cert and --key')
     if not (args.vlm_model / 'devkit/vlm_config.json').is_file():
         raise ValueError(f'Missing VLM model: {args.vlm_model}')
-    run(args)
+    try:
+        run(args)
+    except RestartModels:
+        # Native device descriptors may survive execv. Fully exit this process;
+        # scout.sh waits for it before starting a fresh model group/Python PID.
+        print('SCOUT: all models closed; exiting for a complete restart', flush=True)
+        return 75
     return 0
 
 

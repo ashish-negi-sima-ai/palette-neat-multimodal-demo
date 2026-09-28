@@ -96,8 +96,9 @@ class MissionTests(unittest.TestCase):
         self.assertTrue(self.state.apply_snapshot_result(job, self.result(), 4))
         self.state.observe([person()], 4.1, 1920, 1080)
         self.assertNotEqual(self.state.observed[0].id, self.track.id)
-        self.assertEqual(self.state.phase, 'reviewed')
+        self.assertEqual(self.state.phase, 'searching')
         self.assertEqual(self.state.events[0]['track_id'], self.track.id)
+        self.assertIsNone(self.state.snapshot()['focus'])
         self.assertNotIn('target', self.state.snapshot())
 
     def test_new_mission_rejects_old_inflight_answer(self):
@@ -116,14 +117,84 @@ class MissionTests(unittest.TestCase):
 
     def test_on_demand_does_not_repeat_and_auto_checks_wait(self):
         self.assertIsNotNone(self.state.choose_candidate(1.1))
-        self.state.inspection_requested = False
-        self.state.last_inspection = 4
+        self.state.auto_checks = False
+        self.state.begin_inspection(self.track.id, 1.1)
+        self.state.apply_snapshot_result(self.job(), self.result('no'), 2)
         self.assertIsNone(self.state.choose_candidate(30))
         self.state.auto_checks = True
-        self.assertIsNone(self.state.choose_candidate(18))
-        self.assertIsNotNone(self.state.choose_candidate(19))
+        self.assertIsNone(self.state.choose_candidate(4.09))
+        self.assertIsNotNone(self.state.choose_candidate(4.1))
         self.state.busy = True
-        self.assertIsNone(self.state.choose_candidate(20))
+        self.assertIsNone(self.state.choose_candidate(10))
+
+    def test_focus_requires_positive_and_clears_on_no_uncertain_or_error(self):
+        for result in (self.result('no'), self.result('uncertain'), {'error': 'failed', 'latency_s': .2}):
+            self.assertIsNone(self.state.focus)
+            self.state.begin_inspection(self.track.id, 1.1)
+            self.assertIsNone(self.state.focus, 'An unverified candidate cannot be focused')
+            self.state.apply_snapshot_result(self.job(), self.result(), 1.2)
+            self.assertEqual(self.state.snapshot()['focus']['track_id'], self.track.id)
+            self.state.apply_snapshot_result(self.job(), result, 1.3)
+            self.assertIsNone(self.state.focus)
+            self.assertEqual(self.state.phase, 'searching')
+
+    def test_focus_is_not_transferred_after_track_loss_or_a_late_positive(self):
+        job = self.job()
+        self.state.apply_snapshot_result(job, self.result(), 1.2)
+        self.assertIsNotNone(self.state.focus)
+        self.state.observe([], 2, 1920, 1080)
+        self.assertIsNone(self.state.focus)
+        self.state.observe([person()], 2.1, 1920, 1080)
+        self.assertNotEqual(self.state.observed[0].id, self.track.id)
+        self.state.apply_snapshot_result(job, self.result(), 2.2)
+        self.assertIsNone(self.state.focus)
+
+    def test_new_mission_and_reset_clear_confirmation(self):
+        self.state.apply_snapshot_result(self.job(), self.result(), 1.2)
+        self.state.start('a person wearing red', 'person')
+        self.assertIsNone(self.state.focus)
+        self.assertFalse(self.state.checked_at)
+        self.assertFalse(self.state.track_verdicts)
+        self.state.apply_snapshot_result(self.job(), self.result(), 1.3)
+        self.assertIsNotNone(self.state.focus)
+        self.state.reset()
+        self.assertIsNone(self.state.focus)
+
+    def test_rejection_rotates_candidates_then_rechecks_confirmed_track(self):
+        other = dict(person(400), confidence=.7)
+        for now in (1.12, 1.16, 1.20):
+            self.state.observe([person(), other], now, 1920, 1080)
+        first = self.track
+        second = next(t for t in self.state.observed if t.id != first.id)
+        self.assertEqual(self.state.choose_candidate(1.2).id, first.id)
+        self.state.begin_inspection(first.id, 1.2)
+        self.state.apply_snapshot_result(self.job(), self.result('no'), 1.3)
+        self.assertIsNone(self.state.choose_candidate(4.19))
+        self.assertEqual(self.state.choose_candidate(4.2).id, second.id)
+        self.state.begin_inspection(second.id, 4.2)
+        second.seen = 4.2  # Continuous frames kept this identity alive during inference.
+        self.state.apply_snapshot_result(dict(self.job(), track_id=second.id), self.result(), 4.3)
+        self.assertEqual(self.state.focus['track_id'], second.id)
+        self.assertEqual(self.state.choose_candidate(7.2).id, second.id)
+
+    def test_slow_inference_never_overlaps_or_builds_a_catchup_queue(self):
+        self.state.begin_inspection(self.track.id, 1.1)
+        self.assertIsNone(self.state.choose_candidate(6))
+        self.state.apply_snapshot_result(self.job(), self.result('no'), 6)
+        self.assertIsNotNone(self.state.choose_candidate(6))
+        self.state.begin_inspection(self.track.id, 6)
+        self.state.apply_snapshot_result(self.job(), self.result('no'), 6.5)
+        self.assertIsNone(self.state.choose_candidate(8.99))
+        self.assertIsNotNone(self.state.choose_candidate(9))
+
+    def test_periodic_identical_verdict_keeps_evidence_without_repeating_speech(self):
+        self.state.apply_snapshot_result(self.job(), self.result(), 1.2)
+        self.assertTrue(self.state.events[0]['announce'])
+        self.state.apply_snapshot_result(self.job(), self.result(), 1.3)
+        self.assertFalse(self.state.events[0]['announce'])
+        self.assertEqual(len([e for e in self.state.events if e['kind']=='verified']), 2)
+        self.state.apply_snapshot_result(self.job(), self.result('no'), 1.4)
+        self.assertTrue(self.state.events[0]['announce'])
 
     def test_zone_watch_uses_class_and_bottom_center(self):
         self.state.zone_enabled = True

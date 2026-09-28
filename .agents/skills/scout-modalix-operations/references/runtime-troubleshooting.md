@@ -8,7 +8,7 @@ results live in [SCOUT.md](../../../../mipi-detector/SCOUT.md).
 
 | Validated setup | SoM with Waveshare carrier | Earlier DVT |
 |---|---|---|
-| IMX678 camera name | `imx678 5-0042` | `imx678 0-0042` |
+| IMX678 camera name | `imx678 6-0042` (current overlays) | `imx678 0-0042` |
 | Overlay | `modalix-som-waveshare-ECON-IMX678-1CAM.dtbo` | `modalix-dvt-ECON-IMX678-0CAM.dtbo` |
 | Measured 1080p MIPI rate | 30 FPS | 25 FPS |
 | Capture option | `--allow-cpu-fallback` was required | Strict capture worked on the validated DVT |
@@ -30,8 +30,9 @@ Consult the DVT compatibility section in `SCOUT.md` only for that matching setup
 | Low FPS reported for a default sensor mode | Compare actual dimensions and capture timing. The SoM's default 4K mode reported about 8.76 FPS; explicit 1080p delivered 30 FPS. Raising `--fps` alone does not create a supported mode. |
 | USB unavailable | Inspect `/dev/v4l/by-id/*-video-index0`, permissions, capture ownership and negotiated dimensions. The eMeet Nova was validated at 1280×720 MJPEG; `/dev/video97` was only its then-current node number. |
 | Gemma model construction fails | Check the deployed config and both referenced ELF sets, then package compatibility and the selected Python environment. A directory's existence is not proof of a complete download. |
-| Inference fails after a snapshot | Verify both YOLO runs/models were closed before Gemma, both preview encoders stayed alive, and detector runs were recreated afterward. Keeping the idle USB runner open caused resume failures in the two-camera setup. |
-| Camera watchdog or `IPI overflow recovery` during Gemma | Preserve SCOUT's snapshot pause. Continuous MIPI capture during VLM inference failed on the DVT; concurrent operation on the SoM is not established by a successful paused check. |
+| Inference fails after a snapshot | Verify the complete model group stayed resident. Per-request model unload/reload is no longer supported. On model loss, stop all SCOUT owners and release their buffers before a fresh application start. |
+| Camera watchdog or `IPI overflow recovery` during Gemma | Capture current diagnostics before changing scheduling. Earlier DVT failures led to a pause workaround; the current SoM passed continuous MIPI/USB capture with resident Gemma, Whisper Medium and Supertonic, including the browser voice-to-inspection flow. |
+| CSI lanes not in stop state after a capture timeout | With SCOUT stopped, a scoped rebind of the actual IMX678 sensor recovered the 2026-09-28 SoM failure without rebooting. Confirm device identity and restore its binding in a finally block; do not apply this on every inspection. |
 | Python import succeeds but native runtime crashes | Inspect versions and loaded libraries. Compare `pyneat`, Neat, GStreamer plugins and LLiMa as a release set; a library's ABI filename alone does not identify its package version. |
 
 For native graph failures, capture `runtime.last_error()` and available structured

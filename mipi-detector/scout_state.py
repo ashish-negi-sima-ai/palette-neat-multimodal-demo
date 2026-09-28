@@ -96,7 +96,7 @@ def parse_verdict(text):
 
 
 class MissionState:
-    def __init__(self, labels, auto_checks=False):
+    def __init__(self, labels, auto_checks=True, inspection_interval=3.0):
         self.lock = threading.RLock()
         self.labels = labels
         self.tracker = Tracker()
@@ -122,9 +122,14 @@ class MissionState:
         self.frames = 0
         self.busy = False
         self.auto_checks = auto_checks
+        self.inspection_interval = inspection_interval
         self.inspection_requested = False
+        self.last_inspection_started = -float('inf')
         self.last_inspection = -100.0
         self.last_verdict = None
+        self.focus = None
+        self.checked_at = {}
+        self.track_verdicts = {}
         self.zone_enabled = False
         self.zone = [0.65, 0.48, 0.30, 0.46]
         self.zone_inside = False
@@ -160,6 +165,10 @@ class MissionState:
             self.candidate = None
             self.last_verification = None
             self.last_verdict = None
+            self.focus = None
+            self.checked_at.clear()
+            self.track_verdicts.clear()
+            self.last_inspection_started = -float('inf')
             self.inspection_requested = True
             self.zone_enabled, self.zone_inside = zone, False
             if changed:
@@ -178,6 +187,9 @@ class MissionState:
             self.evidence = {k: v for k, v in self.evidence.items() if k in keep}
             self.last_verification = None
             self.last_verdict = None
+            self.focus = None
+            self.checked_at.clear()
+            self.track_verdicts.clear()
             self.inspection_requested = False
 
     def pause_capture(self):
@@ -186,10 +198,13 @@ class MissionState:
             self.camera_status = 'paused'
             self.tracker.tracks.clear()
             self.observed.clear()
+            self.focus = None
+            self.checked_at.clear()
+            self.track_verdicts.clear()
             self.zone_inside = False
 
     def apply_snapshot_result(self, job, result, now):
-        """An appearance judgment belongs to its evidence, never a resumed track."""
+        """Only a positive snapshot can focus its still-live track in this mission."""
         with self.lock:
             self.busy = False
             self.candidate = None
@@ -198,8 +213,10 @@ class MissionState:
             if job['generation'] != self.generation or not self.query:
                 self.stale_results += 1
                 return False
-            self.phase = 'reviewed'
             if result.get('error'):
+                if self.focus and self.focus['track_id'] == job['track_id']:
+                    self.focus = None
+                self.phase = 'searching' if self.auto_checks else 'reviewed'
                 self.event('error', 'Check inconclusive',
                            'The model could not complete this check. Try another clear view.',
                            job['jpeg'], track_id=job['track_id'], source_pts_ms=job['pts_ms'],
@@ -208,17 +225,38 @@ class MissionState:
             verdict = result['verdict']
             self.last_verdict = verdict
             self.last_verification = time.time()
+            track_id = job['track_id']
+            previous = self.track_verdicts.get(track_id)
+            # Never carry confirmation across an expired ID or capture restart.
+            track = self.tracker.tracks.get(track_id)
+            if track and now - track.seen <= self.tracker.max_gap:
+                self.track_verdicts[track_id] = verdict['match']
+                if verdict['match'] == 'yes':
+                    self.focus = dict(track_id=track_id, verified_at=self.last_verification)
+                elif self.focus and self.focus['track_id'] == track_id:
+                    self.focus = None
+            elif self.focus and self.focus['track_id'] == track_id:
+                self.focus = None
+            self.phase = 'reviewed' if self.focus or not self.auto_checks else 'searching'
             title = {'yes': 'Snapshot matches', 'no': 'Snapshot does not match',
                      'uncertain': 'Need a clearer view'}[verdict['match']]
             self.event('verified' if verdict['match'] == 'yes' else 'check', title,
                        verdict['reason'], job['jpeg'], track_id=job['track_id'],
                        verdict=verdict['match'], source_pts_ms=job['pts_ms'],
-                       latency_s=result['latency_s'], captured_time=job['captured_time'])
+                       latency_s=result['latency_s'], captured_time=job['captured_time'],
+                       announce=previous != verdict['match'])
             return verdict['match'] == 'yes'
 
     def observe(self, objects, now, width, height):
         with self.lock:
             self.observed = self.tracker.update(objects, now)
+            active_ids = self.tracker.tracks.keys()
+            self.checked_at = {k: v for k, v in self.checked_at.items() if k in active_ids}
+            self.track_verdicts = {k: v for k, v in self.track_verdicts.items() if k in active_ids}
+            if self.focus and self.focus['track_id'] not in active_ids:
+                self.focus = None
+                if self.query and self.auto_checks and not self.candidate:
+                    self.phase = 'searching'
             self.last_frame_at = now
             self.frames += 1
             self.camera_status = 'live'
@@ -241,19 +279,37 @@ class MissionState:
         with self.lock:
             if not self.query or self.busy or self.vlm_status != 'ready':
                 return None
-            if not self.inspection_requested and not (self.auto_checks and now - self.last_inspection >= 15):
+            if not self.inspection_requested and not (self.auto_checks and
+                    now >= self.last_inspection_started + self.inspection_interval):
                 return None
             eligible = [t for t in self.observed if t.label == self.object_class and t.hits >= 3]
             if not eligible:
                 return None
-            return max(eligible, key=lambda t: t.confidence)
+            if self.focus:
+                # Recheck the confirmed identity before considering a replacement.
+                return next((t for t in eligible if t.id == self.focus['track_id']), None)
+            # Try unseen tracks first, then the least recently inspected track.
+            return min(eligible, key=lambda t: (self.checked_at.get(t.id, -float('inf')), -t.confidence))
+
+    def begin_inspection(self, track_id, now):
+        """Record the actual capture/start time, without queuing missed intervals."""
+        with self.lock:
+            self.candidate = track_id
+            self.busy = True
+            self.inspection_requested = False
+            self.last_inspection_started = now
+            self.checked_at[track_id] = now
+            self.vlm_requests += 1
+            self.phase = 'verifying'
 
     def snapshot(self):
         with self.lock:
             return dict(mission_id=self.generation, query=self.query, object_class=self.object_class,
                         phase=self.phase, candidate=self.candidate,
+                        focus=dict(self.focus) if self.focus else None,
                         events=list(self.events), last_verification=self.last_verification,
                         last_verdict=self.last_verdict, auto_checks=self.auto_checks,
+                        inspection_interval_s=self.inspection_interval,
                         vlm=dict(status=self.vlm_status, error=self.vlm_error, busy=self.busy,
                                  latency_s=self.vlm_latency, requests=self.vlm_requests,
                                  stale_results=self.stale_results),

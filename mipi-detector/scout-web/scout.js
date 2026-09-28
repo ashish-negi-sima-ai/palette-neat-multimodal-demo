@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const video = $('video'), overlay = $('overlay'), focus = $('focus');
 const ctx = overlay.getContext('2d'), focusCtx = focus.getContext('2d');
+let voice;
 let config, state, source, timelineKey = '', focusedId = null, focusBox = null;
 let lastFrame = 0, lastMessage = null, lastStateAt = 0;
 let reconnectAfterPause = false;
@@ -28,9 +29,9 @@ function metric(id, value, unit) {
 function clearFocus() {
   focusCtx.clearRect(0,0,focus.width,focus.height);
   $('focus-empty').hidden = false;
-  $('focus-id').textContent = 'NO SUBJECT';
-  $('focus-label').textContent = 'Digital inspection view';
-  $('focus-checks').textContent = 'Live detector view';
+  $('focus-id').textContent = 'NO MATCH YET';
+  $('focus-label').textContent = 'Waiting for a confirmed match';
+  $('focus-checks').textContent = 'Gemma verification required';
   focusedId = focusBox = null;
 }
 function drawFocus(obj) {
@@ -46,7 +47,7 @@ function drawFocus(obj) {
   focusCtx.drawImage(video,sx,sy,sw,sh,(focus.width-dw)/2,(focus.height-dh)/2,dw,dh);
   $('focus-empty').hidden=true;$('focus-id').textContent=obj.id;
   $('focus-label').textContent=obj.label+' · '+Math.round(obj.confidence*100)+'% detection';
-  $('focus-checks').textContent='Live candidate · YOLO';
+  $('focus-checks').textContent=state.candidate===obj.id?'Gemma match · rechecking':'Gemma-confirmed track · live';
 }
 function drawFrame(payload) {
   if (!payload.ready || !video.videoWidth) return;
@@ -69,16 +70,16 @@ function drawFrame(payload) {
     ctx.font=`${10*scale}px sans-serif`;ctx.fillStyle=data.zone.inside?'#ffc779':'#70e4dc';
     ctx.fillText(data.zone.inside?'SUBJECT IN WATCH ZONE':'WATCH ZONE',x*overlay.width+8*scale,y*overlay.height+17*scale);
   }
-  let focused=null;
+  const confirmedId=current && state.focus?.track_id === data.focus?.track_id ? state.focus?.track_id : null;
   for (const obj of objects) {
     if (!Array.isArray(obj.bbox)||obj.bbox.length!==4) continue;
     const checking=current&&obj.id===state.candidate;
     const relevant=!state?.query||obj.label===state.object_class;
     const [x,y,w,h]=obj.bbox;
-    const color=checking?'#ffc779':relevant?'#77ced8':'#8198a455';
+    const color=obj.id===confirmedId?'#9bea99':checking?'#ffc779':relevant?'#77ced8':'#8198a455';
     ctx.strokeStyle=color;ctx.lineWidth=(checking?2:1)*scale;ctx.strokeRect(x,y,w,h);
     if(relevant) {
-      const label=`${obj.id} · ${obj.label}${checking?' · CHECKING':''}`;
+      const label=`${obj.id} · ${obj.label}${obj.id===confirmedId?' · MATCH':''}${checking?' · CHECKING':''}`;
       ctx.font=`${11*scale}px sans-serif`;
       const tw=ctx.measureText(label).width,ty=Math.max(0,y-22*scale);
       ctx.fillStyle='#07131be6';ctx.fillRect(x,ty,tw+14*scale,22*scale);
@@ -88,12 +89,10 @@ function drawFrame(payload) {
       ctx.strokeStyle='#9bea9988';ctx.lineWidth=1.4*scale;ctx.beginPath();
       obj.trail.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.stroke();
     }
-    if(checking&&!focused) focused=obj;
   }
-  // New capture sessions receive new IDs. Snapshot verdicts never label a live track.
-  if(!focused && current && state.query) focused=objects.find(o=>o.id===focusedId&&o.label===state.object_class)
-    || objects.filter(o=>o.label===state.object_class).sort((a,b)=>b.confidence-a.confidence)[0];
-  drawFocus(focused);
+  // Only this mission's confirmed identity can appear in Subject Focus.
+  // A candidate or a replacement track must first receive its own positive verdict.
+  drawFocus(confirmedId ? objects.find(o=>o.id===confirmedId&&o.label===state.object_class) : null);
   $('scene-count').textContent=`${objects.length} tracked object${objects.length===1?'':'s'}`;
 }
 function evidenceDialog(event) {
@@ -123,44 +122,48 @@ function renderTimeline(events) {
 }
 function renderState(next){
   const changed=!state||state.mission_id!==next.mission_id;
-  if(changed&&next.query){$('query').value=next.query;$('object-class').value=next.object_class;$('zone').checked=next.zone.enabled;}
+  if(changed&&next.query&&!voice?.recording&&!voice?.starting&&!voice?.captured){$('query').value=next.query;$('object-class').value=next.object_class;$('zone').checked=next.zone.enabled;}
   state=next;lastStateAt=performance.now();
-  const phase=state.phase;$('phase').textContent=phaseNames[phase]||phase;$('phase').className='phase '+phase;
+  if(changed || !state.focus || (focusedId && focusedId!==state.focus.track_id))clearFocus();
+  const phase=state.phase;$('phase').textContent=phase==='reviewed'&&state.focus?'MATCH CONFIRMED':phaseNames[phase]||phase;$('phase').className='phase '+phase;
   const live=state.camera.status==='live'&&state.camera.observation_age_s<2;
   const liveCount=Number(live)+Number(state.watch?.status==='live');
   $('connection').textContent=state.watch?`● ${liveCount}/2 CAMERAS LIVE`:live?'● SYSTEM LIVE':state.camera.status.toUpperCase();$('connection').className='connection'+(live?' live':'');
   const verdict=state.last_verdict;
-  const messages={idle:'Describe a visible subject. Each check briefly pauses capture, then returns to live detection.',searching:`Waiting for a clear ${state.object_class}: ${state.query}`,verifying:`Gemma is checking a saved snapshot. Live capture resumes after the answer.`,reviewed:verdict?`${verdict.match==='yes'?'Snapshot matches':verdict.match==='no'?'Snapshot does not match':'A clearer view is needed'}. ${verdict.reason} Inspect again for a fresh observation.`:'Check inconclusive. Inspect another clear view.'};
-  $('mission-message').textContent=state.vlm.status==='loading'?'Gemma is loading. The camera starts when the model is ready.':messages[phase]||'';
+  const repeat=state.auto_checks?`Subject checks repeat every ${state.inspection_interval_s}s when Gemma is available.`:'Inspect again for a fresh observation.';
+  const lastCheck=verdict&&verdict.match!=='yes'?`${verdict.match==='no'?'Snapshot does not match':'A clearer view is needed'}. ${verdict.reason} `:'';
+  const messages={idle:'Describe a visible subject. Subject Focus appears after Gemma confirms a match.',searching:`${lastCheck}Looking for a matching ${state.object_class}. ${repeat}`,verifying:state.focus?'Rechecking the confirmed subject. Live capture continues.':'Gemma is checking a candidate. Subject Focus requires a match.',reviewed:verdict?`${verdict.match==='yes'?'Snapshot matches':verdict.match==='no'?'Snapshot does not match':'A clearer view is needed'}. ${verdict.reason} ${repeat}`:'Check inconclusive. Inspect another clear view.'};
+  $('mission-message').textContent=state.vlm.status==='loading'||state.speech?.models==='loading'?'Models are loading. Cameras start when the complete model group is ready.':messages[phase]||'';
   $('scene-state').textContent=state.zone.inside?'WATCH ZONE · SUBJECT PRESENT':phase==='idle'?'LIVE OBSERVATION':phaseNames[phase];
   $('step-search').className=phase==='searching'?'active':phase!=='idle'?'done':'';
   $('step-verify').className=phase==='verifying'?'active':phase==='reviewed'?'done':'';
   $('step-follow').className=phase==='reviewed'?'active':'';
   const paused=['paused','resuming'].includes(state.camera.status);
   $('capture-pause').hidden=!paused;
-  $('capture-pause').textContent=state.camera.status==='resuming'?'RETURNING TO LIVE CAPTURE':'SNAPSHOT CHECK · Live capture paused';
-  if(paused){reconnectAfterPause=true;source?.expectSourcePause('Inspecting a saved snapshot',3500);ctx.clearRect(0,0,overlay.width,overlay.height);clearFocus();metric('metric-video',null,'fps');}
+  $('capture-pause').textContent=state.camera.status==='resuming'?'RETURNING TO LIVE CAPTURE':state.speech?.busy?'VOICE · Live capture paused':state.vlm.status==='loading'?'RESTORING GEMMA · Live capture paused':'SNAPSHOT CHECK · Live capture paused';
+  if(paused){reconnectAfterPause=true;source?.expectSourcePause('Processing inspection or speech',10000);ctx.clearRect(0,0,overlay.width,overlay.height);clearFocus();metric('metric-video',null,'fps');}
   if(live&&reconnectAfterPause){reconnectAfterPause=false;openVideo();}
   $('start').disabled=state.vlm.busy || state.vlm.status!=='ready';
   $('vlm-status').textContent=state.vlm.busy?'Examining evidence':({loading:'Loading model',ready:'Ready',error:'Unavailable'}[state.vlm.status]||state.vlm.status);
-  $('vlm-dot').className=state.vlm.status==='ready'?'ready':'';$('retry').hidden=state.vlm.status!=='error';
+  $('vlm-dot').className=state.vlm.status==='ready'?'ready':'';$('retry').hidden=state.vlm.status==='loading'||state.speech?.models==='loading';
   metric('metric-vlm',number(state.vlm.latency_s)?.toFixed(2)??null,'s');
   renderWatch(state.watch);
   renderPerformance();
   if(state.camera.error)reportError('Camera unavailable. See the application log.');else if(state.vlm.error)reportError('Gemma is unavailable. Retry the model or check the application log.');else reportError('');
   renderTimeline(state.events);
+  voice?.update(state, selectedCamera);
 }
 $('mission-form').addEventListener('submit',async event=>{
   event.preventDefault();$('start').disabled=true;
-  try{renderState(await api('/api/mission',{query:$('query').value,object_class:$('object-class').value,zone:$('zone').checked}));clearFocus();}
+  try{await voice?.cancel();renderState(await api('/api/mission',{client_id:voice?.clientId,query:$('query').value,object_class:$('object-class').value,zone:$('zone').checked}));clearFocus();}
   catch(error){reportError(error.message);}finally{$('start').disabled=false;}
 });
-$('reset').onclick=async()=>{try{renderState(await api('/api/reset',{}));clearFocus();}catch(e){reportError(e.message);}};
+$('reset').onclick=async()=>{try{await voice?.cancel();renderState(await api('/api/reset',{}));clearFocus();}catch(e){reportError(e.message);}};
 $('retry').onclick=async()=>{try{await api('/api/vlm/retry',{});$('retry').hidden=true;}catch(e){reportError(e.message);}};
-document.querySelectorAll('[data-query]').forEach(button=>button.onclick=()=>{$('query').value=button.dataset.query;$('object-class').value=button.dataset.class;$('query').focus();});
+document.querySelectorAll('[data-query]').forEach(button=>button.onclick=()=>{voice?.cancel();$('query').value=button.dataset.query;$('object-class').value=button.dataset.class;$('query').focus();});
 $('close-dialog').onclick=()=>$('evidence-dialog').close();
 $('evidence-dialog').onclick=event=>{if(event.target===$('evidence-dialog'))event.target.close();};
-async function poll(){try{renderState(await api('/api/state'));}catch(e){reportError('Connection to Modalix lost. Reconnecting…');$('connection').textContent='DISCONNECTED';$('connection').className='connection';}setTimeout(poll,350);}
+async function poll(){try{renderState(await api('/api/state'));}catch(e){reconnectAfterPause=usbReconnect=true;voice?.connectionLost();reportError('Connection to Modalix lost. Reconnecting…');$('connection').textContent='DISCONNECTED';$('connection').className='connection';}setTimeout(poll,350);}
 function openVideo(){
   // Re-negotiate after a declared pause to clear the browser's old frame buffer.
   source?.stop();lastFrame=0;lastMessage=null;clearFocus();
@@ -171,6 +174,7 @@ function openVideo(){
 
 function selectCamera(id){
   if(id==='usb'&&!config?.usb)return;
+  if(id!==selectedCamera)voice?.cancel();
   selectedCamera=id;
   $('primary-camera').append($(id==='mipi'?'mipi-panel':'usb-panel'));
   if(config?.usb)$('secondary-camera').append($(id==='mipi'?'usb-panel':'mipi-panel'));
@@ -204,13 +208,14 @@ function renderWatch(watch){
   $('inspect-area').disabled=state.vlm.busy||state.vlm.status!=='ready'||watch.status!=='live'||watch.inspection_requested;
   $('watch-vlm-status').textContent=watch.checking?'Inspecting area':state.vlm.busy?'Checking MIPI snapshot':state.vlm.status;
   $('watch-message').textContent=watch.error?'USB camera unavailable. Reconnect it; the MIPI view can continue.':
-    watch.checking?'Gemma is examining the saved area crop. Both cameras resume after the answer.':
+    watch.checking?'Gemma is examining the saved area crop. Both cameras stay live.':
     watch.last_verdict?`Last snapshot: ${watch.last_verdict.reason} Live occupancy comes from current detections.`:
     watch.occupied?'An object overlaps the marked area. Its image is saved in the mission timeline.':
     'Events report detected objects in this area. Unrecognized objects may not be detected.';
   const paused=['paused','resuming'].includes(watch.status);
   $('usb-pause').hidden=!paused;
-  if(paused){usbReconnect=true;usbSource?.expectSourcePause('Inspecting a saved snapshot',6000);usbCtx.clearRect(0,0,usbOverlay.width,usbOverlay.height);}
+  $('usb-pause').textContent=$('capture-pause').textContent;
+  if(paused){usbReconnect=true;usbSource?.expectSourcePause('Processing inspection or speech',10000);usbCtx.clearRect(0,0,usbOverlay.width,usbOverlay.height);}
   if(watch.status==='live'&&usbReconnect){usbReconnect=false;openUsbVideo();}
 }
 function drawUsb(payload){
@@ -250,12 +255,12 @@ function openUsbVideo(){
     onStatus:status=>{$('usb-video-status').textContent=status.width?`${status.width} × ${status.height} · ${status.text}`:status.text;if(selectedCamera==='usb')metric('metric-video',status.phase==='live'?number(status.fps):null,'fps');}});
 }
 async function updateWatch(fields){
-  try{renderState(await api('/api/watch',fields));}catch(e){reportError(e.message);}
+  try{await voice?.cancel();renderState(await api('/api/watch',fields));}catch(e){reportError(e.message);}
 }
 $('select-mipi').onclick=()=>selectCamera('mipi');$('select-usb').onclick=()=>selectCamera('usb');
 $('watch-enabled').onchange=()=>updateWatch({enabled:$('watch-enabled').checked});
 $('watch-class').onchange=()=>updateWatch({object_class:$('watch-class').value});
-$('inspect-area').onclick=async()=>{try{renderState(await api('/api/watch/inspect',{}));}catch(e){reportError(e.message);}};
+$('inspect-area').onclick=async()=>{try{await voice?.cancel();renderState(await api('/api/watch/inspect',{client_id:voice?.clientId}));}catch(e){reportError(e.message);}};
 $('draw-area').onclick=()=>{drawing=!drawing;draftZone=dragStart=null;usbOverlay.classList.toggle('drawing',drawing);$('draw-area').classList.toggle('active',drawing);$('area-hint').textContent=drawing?'Drag across the USB image to set the watch area.':'Drag a rectangle on the USB view to match your mat or table.';};
 function usbPoint(event){const r=usbOverlay.getBoundingClientRect();return [Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(event.clientY-r.top)/r.height))];}
 usbOverlay.onpointerdown=event=>{if(!drawing)return;dragStart=usbPoint(event);usbOverlay.setPointerCapture(event.pointerId);};
@@ -265,6 +270,8 @@ usbOverlay.onpointercancel=()=>{dragStart=draftZone=null;};
 async function start(){
   try{
     config=await api('/api/config');
+    voice=new ScoutVoice(config.speech, api, ()=>state);
+    for(const id of ['query','object-class','zone'])$(id).addEventListener('input',()=>voice.cancel());
     $('camera-strip').hidden=!config.usb;$('secondary-camera').hidden=!config.usb;
     openVideo();
     openUsbVideo();

@@ -48,8 +48,8 @@
             <label class="zone-option"><input type="checkbox" id="zone"> Watch this object class in the marked zone</label>
             <div class="actions"><button class="primary" type="submit" id="start">Inspect subject <span>↗</span></button><button class="reset" type="button" id="reset" title="Stop this mission">Reset</button></div>
           </form>
-          <div class="mission-message" id="mission-message">Describe a visible subject. Each check briefly pauses capture, then returns to live detection.</div>
-          <div class="model-line"><span><i id="vlm-dot"></i>Gemma 4 E4B</span><span id="vlm-status">Loading</span><button id="retry" type="button" hidden>Retry</button></div>
+          <div class="mission-message" id="mission-message">Describe a visible subject. Live capture continues while a saved snapshot is inspected.</div>
+          <div class="model-line"><span><i id="vlm-dot"></i>Gemma 4 E4B</span><span id="vlm-status">Loading</span><button id="retry" type="button" hidden>Restart all models</button></div>
         </section>
         <section class="panel mission-panel" id="watch-panel" hidden>
           <div class="panel-heading"><span>LANDING / PAYLOAD WATCH</span><span id="watch-status" class="phase">OBSERVING</span></div>
@@ -64,10 +64,18 @@
           <div id="watch-message" class="mission-message">Waiting for the USB camera.</div>
           <div class="model-line"><span>Gemma 4 E4B</span><span id="watch-vlm-status">Loading</span></div>
         </section>
+        <section class="panel speech-panel" id="speech-panel" hidden>
+          <div class="panel-heading"><span>VOICE</span><span>THIS DEVICE</span></div>
+          <div class="speech-controls">
+            <p id="speech-hint"></p>
+            <div class="speech-actions"><button type="button" id="listen" class="primary" aria-pressed="false">Listen</button><button type="button" id="play-reply" class="outline-button" hidden>Play reply</button><button type="button" id="cancel-speech" class="reset" hidden>Cancel speech</button></div>
+            <p id="speech-status" role="status" aria-live="polite">Ready.</p>
+          </div>
+        </section>
         <section class="panel focus-panel">
-          <div class="panel-heading"><span>SUBJECT FOCUS</span><span id="focus-id">NO SUBJECT</span></div>
-          <div class="focus-viewport"><canvas id="focus" width="640" height="360"></canvas><div id="focus-empty"><span class="reticle" aria-hidden="true"></span><span>Your subject will appear here</span></div></div>
-          <div class="focus-caption"><span id="focus-label">Digital inspection view</span><span id="focus-checks">Awaiting mission</span></div>
+          <div class="panel-heading"><span>SUBJECT FOCUS</span><span id="focus-id">NO MATCH YET</span></div>
+          <div class="focus-viewport"><canvas id="focus" width="640" height="360"></canvas><div id="focus-empty"><span class="reticle" aria-hidden="true"></span><span>A matching subject will appear here</span></div></div>
+          <div class="focus-caption"><span id="focus-label">Waiting for a confirmed match</span><span id="focus-checks">Gemma verification required</span></div>
         </section>
         <div id="secondary-camera" hidden>
           <section class="panel scene-panel" id="usb-panel">
@@ -90,6 +98,6 @@
     <footer><span>SiMa.ai <b>×</b> Palette Neat</span><span>Cameras → YOLO26 → Gemma 4 → Mission awareness</span><span>All inference on Modalix</span></footer>
   </main>
   <dialog id="evidence-dialog"><button id="close-dialog" aria-label="Close evidence">×</button><img id="evidence-image" alt="Saved camera evidence"><div><span class="eyebrow">OBSERVATION SOURCE</span><h2 id="evidence-title"></h2><p id="evidence-detail"></p><small id="evidence-time"></small></div></dialog>
-  <script src="/webrtc.js"></script><script src="/scout.js"></script>
+  <script src="/webrtc.js"></script><script src="/voice.js"></script><script src="/scout.js"></script>
 </body>
 </html>

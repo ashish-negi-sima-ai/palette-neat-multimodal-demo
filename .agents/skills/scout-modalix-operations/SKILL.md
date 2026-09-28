@@ -49,6 +49,10 @@ configuration, compatibility, FPS or stream delivery is the problem.
   for the USB watch view; omit it for MIPI only. Initial Gemma loading can take
   roughly two minutes over the validated shared filesystem. Follow readiness
   and error logs before deciding that the startup failed.
+- SCOUT keeps models resident and capture live during inspection/speech. Use
+  the YAML example for speech and `--no-stt` when Whisper testing is deferred.
+  Never restart just one model: stop all SCOUT-owned models, runs and encoders
+  first. The console's restart action performs this complete group restart.
 - To stop, use Ctrl+C in the owning terminal or SIGTERM to the confirmed SCOUT
   parent PID. Wait for shutdown, camera release and port release before
   restarting. An existing `live.pid` must be checked against `/proc/<pid>/cmdline`;
@@ -67,7 +71,9 @@ The board's self-signed certificate may require `curl -k` for diagnostics.
 
 For a launch or pipeline fix, observe increasing frames and browser video on
 each configured view. For a VLM/lifecycle change, inspect an actual visible
-subject or USB region, open its evidence, and confirm both streams resume.
+subject or USB region, open its evidence, and confirm both streams keep advancing
+during inference. For group-lifetime changes also check model PIDs remain stable
+across requests and all owned processes/buffers are released together on stop.
 Check overlay correlation with `scout.source.stats()` and, when configured,
 `scout.usbSource.stats()` in the browser. API status or metadata receipt alone
 does not prove that video and overlays match.

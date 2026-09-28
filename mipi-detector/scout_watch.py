@@ -118,7 +118,8 @@ class UsbWatch:
         self.args.fps, self.args.channel = args.usb_fps, args.channel + 1
         self.args.bitrate = min(args.bitrate, 2500)
         self.preview = preview_factory(neat, self.args) if not args.no_stream else None
-        self.stopping, self.pausing, self.parked = threading.Event(), threading.Event(), threading.Event()
+        self.stopping = threading.Event()
+        self.error = None
         self.frame = None
         self.frame_lock = threading.Lock()
         self.thread = threading.Thread(target=self._run, name='scout-usb', daemon=True)
@@ -144,21 +145,6 @@ class UsbWatch:
                 meta.metadata_port_base = args.metadata_port_base
                 sender = neat.MetadataSender(meta)
             while not self.stopping.is_set():
-                if self.pausing.is_set():
-                    if cap is not None:
-                        cap.release()
-                        cap = None
-                    if runner is not None:
-                        runner.close()
-                    runner = model = None
-                    with self.state.lock:
-                        self.state.watch.unavailable('paused')
-                    self.parked.set()
-                    while self.pausing.is_set() and not self.stopping.wait(.05):
-                        pass
-                    self.parked.clear()
-                    stamps.clear()
-                    continue
                 tick = time.monotonic()
                 if model is None:
                     model = detector.make_model(neat, args, input_format=neat.PreprocessColorFormat.BGR)
@@ -226,6 +212,7 @@ class UsbWatch:
                 result = frame = tensor = None
                 self.stopping.wait(max(0, 1/args.fps - (time.monotonic()-tick)))
         except Exception as exc:
+            self.error = str(exc)
             print('USB watch error: ' + str(exc), flush=True)
             with self.state.lock:
                 self.state.watch.unavailable('error', str(exc))
@@ -235,16 +222,7 @@ class UsbWatch:
             if runner is not None:
                 runner.close()
             runner = model = None
-            self.parked.set()
             # Keep the encoder until global shutdown, even if USB goes offline.
-
-    def pause(self):
-        self.pausing.set()
-        if not self.parked.wait(8):
-            raise RuntimeError('USB inference did not pause; cannot start Gemma safely')
-
-    def resume(self):
-        self.pausing.clear()
 
     def inspection_job(self):
         with self.state.lock:
@@ -283,9 +261,11 @@ class UsbWatch:
                 source_pts_ms=job['pts_ms'], captured_time=job['captured_time'],
                 latency_s=result.get('latency_s'), verdict=verdict['match'] if verdict else 'uncertain')
 
-    def close(self):
+    def request_stop(self):
         self.stopping.set()
-        self.pausing.clear()
+
+    def close(self):
+        self.request_stop()
         self.thread.join(10)
         if self.thread.is_alive():
             raise RuntimeError('USB worker did not stop')

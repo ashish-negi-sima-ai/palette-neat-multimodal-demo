@@ -16,6 +16,7 @@ checkout root; do not depend on a particular `/workspace` mount.
 |---|---|
 | Camera, preprocessing, YOLO configuration and decoded boxes | `mipi-detector/main.py`: `make_model`, `make_graph`, `detection_objects` |
 | SCOUT launch, HTTP API, shared VLM scheduling and capture lifecycle | `mipi-detector/scout.py`: `run`, `Console`, `Preview`, `FrameCache` |
+| Resident speech servers and coordinated model shutdown | `mipi-detector/scout_speech.py`, `scout_speech_worker.py`, `scout_lifecycle.py` |
 | MIPI tracking, missions and shared evidence | `mipi-detector/scout_state.py`: `Tracker`, `MissionState` |
 | USB capture, area occupancy, reconnect and area inspection | `mipi-detector/scout_watch.py`: `WatchState`, `UsbWatch` |
 | Gemma artifacts, prompts, worker process and cancellation | `mipi-detector/scout_vlm.py` |
@@ -31,12 +32,14 @@ SCOUT-only presentation changes.
 
 ## Preserve the relevant contracts
 
-- **Accelerator lifetime:** Gemma loads before capture starts. On the validated
-  stack, a snapshot check pauses both cameras and closes both YOLO runs/models;
-  the H.264 encoders remain alive. Camera/YOLO runs are recreated afterward.
-  Rebuilding encoders with YOLO caused preprocessing failures on the SoM's
-  Neat 0.4.0 runtime. Treat this as a measured compatibility constraint;
-  changing it requires validation on the target runtime.
+- **Model-group lifetime:** Gemma and enabled speech models load once before
+  capture starts. Both camera/YOLO runs and encoders stay live during snapshot
+  and speech inference. The user requires every SCOUT model to stop together
+  when one model stops. Fatal model loss stops the group; explicit restart
+  closes all owners and fully exits Python before `scout.sh` starts a new
+  process, releasing native descriptors and allocator caches. Do not replace
+  Python in place or restore the historical per-request pause/reload
+  workaround. Request cancellation invalidates results without unloading models.
 - **Image and time ownership:** MIPI uses NV12; USB uses OpenCV BGR with matching
   Neat preprocessing. `FrameCache` keeps at most eight samples. Evidence lookup
   uses original MIPI capture PTS; preview video and metadata use the same
@@ -47,8 +50,15 @@ SCOUT-only presentation changes.
   from an outdated generation. Gemma consumes the same decoded 480×480 JPEG
   displayed as evidence. A snapshot verdict does not verify a new live track.
   Keep one active VLM request, bounded pending work, cancellation and timeout.
+- **Confirmed subject focus:** Only a positive snapshot may select its still-live
+  track for Subject Focus. A negative/uncertain/error recheck, new mission or
+  expired identity clears it. Never fall back to an unverified detection in the
+  focus renderer. Automatic subject checks default to three seconds between
+  snapshot starts, with no overlapping Gemma requests or catch-up queue. Try
+  unchecked/least-recently-checked candidates until a match, then recheck that
+  identity. Repeated same-track verdicts retain evidence without repeating speech.
 - **Independent missions:** MIPI IDs use `T…`, USB IDs use `U…`; IDs are local
-  and tracks are discarded across capture pauses. MIPI mission changes preserve
+  and tracks continue through inspection. MIPI mission changes preserve
   USB evidence. Scope cancellation to the relevant camera's request.
 - **USB observations:** `WatchState` validates normalized `[x,y,w,h]` regions.
   Current occupancy requires at least 20% detection-box overlap, with 0.5-second
@@ -79,7 +89,7 @@ repository instructions do not require a personal skills installation.
 For state or lifecycle changes, run from the repository root:
 
 ```bash
-python3 -m unittest discover -s mipi-detector -p test_scout.py -v
+python3 -m unittest discover -s mipi-detector -p 'test_scout*.py' -v
 ```
 
 For browser changes, run `node --check mipi-detector/scout-web/scout.js` and
@@ -90,7 +100,10 @@ read on request, so a browser refresh usually suffices for UI-only edits.
 
 Hardware-independent tests do not establish camera or accelerator correctness.
 For pipeline changes, validate on the requested board: check each configured
-camera, inspect a snapshot, and confirm resumed video with matched overlays.
+camera, inspect a snapshot, and confirm advancing video with matched overlays
+during inference. For lifetime changes, verify group shutdown/restart and that
+owned processes and DMA buffers are released. Respect any user request to defer
+testing a model (for example Whisper while it downloads).
 Use [scout-modalix-operations](../scout-modalix-operations/SKILL.md) for this work.
 Report what was actually run and update `SCOUT.md` for changed behavior. Keep
 model archives in `models/` and generated `runtime/` artifacts out of code commits
